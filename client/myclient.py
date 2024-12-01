@@ -1,9 +1,14 @@
 import socket
 import os
 
+# Ruta base para los archivos del cliente
+FILEPATH = "/app/client_files/"
+
 def upload_file(client_socket, filename):
-    if os.path.isfile(filename):
-        filesize = os.path.getsize(filename)
+    # Verifica si el archivo existe en la ruta especificada
+    filepath = os.path.join(FILEPATH, filename)
+    if os.path.isfile(filepath):
+        filesize = os.path.getsize(filepath)
         client_socket.send(f'UPLOAD == {filename} == {filesize}'.encode())
         confirm = client_socket.recv(1048576).decode()
         print(confirm)
@@ -17,7 +22,7 @@ def upload_file(client_socket, filename):
             response = client_socket.recv(1048576).decode()
             print(response)
     else:
-        print("File not found")
+        print(f"File not found: {filepath}")
 
 def search_file(client_socket, file_name, file_type):
     client_socket.send(f'SEARCH == {file_name} == {file_type}'.encode())
@@ -36,37 +41,45 @@ def download_file(client_socket, filename):
     response = client_socket.recv(1048576).decode()
     if response.startswith('FileSize'):
         filesize = int(response.split()[1])
-        with open('downloaded_' + filename, 'wb') as f:
+        download_path = os.path.join(FILEPATH, 'downloaded_' + filename)
+        with open(download_path, 'wb') as f:
             bytes_received = 0
             while bytes_received < filesize:
                 data = client_socket.recv(1048576)
                 f.write(data)
                 bytes_received += len(data)
-        print("Download complete.")
+        print(f"Download complete: {download_path}")
     else:
         print("File not found on server.")
 
 def main():
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect(('localhost', 9999))
+    try:
+        client_socket.connect(('10.0.11.10', 9999))  # Conecta al servidor en la red configurada
+        print("Connected to server")
+    except socket.error as e:
+        print(f"Error connecting to server: {e}")
+        return
 
-    while True: 
+    while True:
         command = input("Enter command (UPLOAD, SEARCH, DOWNLOAD, EXIT): ")
         if command.startswith('UPLOAD'):
-            filename = input("Enter  file name: ")
-            
+            filename = input("Enter the name of the file to upload: ")
             upload_file(client_socket, filename)
         elif command.startswith('SEARCH'):
             filename = input("Enter file name: ")
             file_type = input("Enter file type: ")
             search_file(client_socket, filename, file_type)
         elif command.startswith('DOWNLOAD'):
-            filename = input("Enter command file name: ")
+            filename = input("Enter the name of the file to download: ")
             download_file(client_socket, filename)
         elif command == 'EXIT':
             client_socket.send(b'EXIT')
             client_socket.close()
+            print("Disconnected from server")
             break
+        else:
+            print("Invalid command. Please try again.")
 
 if __name__ == '__main__':
     main()

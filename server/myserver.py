@@ -1,11 +1,13 @@
+# server/myserver.py
+
 import socket
 import threading
 import os
 import sqlite3
 import hashlib
 
-# Directory to store files
-FILE_DIR = 'server_files'
+# Directorio para almacenar archivos
+FILE_DIR = '/app/server_files'
 DB_FILE = 'files.db'
 
 def save_file(file_content, filename):
@@ -169,7 +171,7 @@ def main():
         os.makedirs(FILE_DIR)
     setup_database()
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('localhost', 9999))
+    server_socket.bind(('0.0.0.0', 9999))
     server_socket.listen(5)
     print("Server listening...")
     while True:
