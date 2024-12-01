@@ -2,7 +2,7 @@ import socket
 import os
 
 # Ruta base para los archivos del cliente
-FILEPATH = "/app/client_files/"
+FILEPATH = "/app/client_files"
 
 def upload_file(client_socket, filename):
     # Verifica si el archivo existe en la ruta especificada
@@ -18,7 +18,7 @@ def upload_file(client_socket, filename):
                 while data:
                     client_socket.send(data)
                     data = f.read(1048576)
-        
+
             response = client_socket.recv(1048576).decode()
             print(response)
     else:
