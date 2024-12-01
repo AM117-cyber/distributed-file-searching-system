@@ -14,7 +14,7 @@ COPY server/server.sh /usr/local/bin/server.sh
 # Asegúrate de que el script sea ejecutable
 RUN chmod +x /usr/local/bin/server.sh
 # Crear la carpeta server_files
-RUN mkdir /app/server_files
+RUN mkdir -p /app/server_files && chmod -R 777 /app/server_files
 
 # Copiar el script del servidor
 COPY myserver.py /app/myserver.py

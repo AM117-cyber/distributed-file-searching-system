@@ -13,7 +13,7 @@ def upload_file(client_socket, filename):
         confirm = client_socket.recv(1048576).decode()
         print(confirm)
         if confirm.startswith('Valid'):
-            with open(filename, 'rb') as f:
+            with open(filepath, 'rb') as f:
                 data = f.read(1048576)
                 while data:
                     client_socket.send(data)
