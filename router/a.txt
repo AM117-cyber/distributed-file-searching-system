@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Habilitar el reenvío de paquetes
+echo "Habilitando IP forwarding..."
+sysctl -w net.ipv4.ip_forward=1
+
+# Identificar las interfaces de red
+# eth0: clients
+# eth1: servers
+
+echo "Configurando reglas de iptables..."
+
+# Permitir tráfico de eth0 a eth1
+iptables -A FORWARD -i eth0 -o eth1 -j ACCEPT
+
+# Permitir tráfico de eth1 a eth0
+iptables -A FORWARD -i eth1 -o eth0 -j ACCEPT
+
+# Configurar NAT para el tráfico saliente en eth1
+iptables -t nat -A POSTROUTING -o eth1 -j MASQUERADE
+
+echo "Reglas de iptables configuradas."
+
+# Mantener el contenedor activo
+tail -f /dev/null
