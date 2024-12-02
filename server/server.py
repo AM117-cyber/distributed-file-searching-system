@@ -8,7 +8,7 @@ import hashlib
 
 # Directorio para almacenar archivos
 FILE_DIR = '/app/server_files'
-DB_FILE = 'files.db'
+DB_FILE = 'db/files.db'
 
 def save_file(file_content, filename):
     filepath = os.path.join(FILE_DIR, filename)
@@ -42,25 +42,25 @@ def setup_database():
 def check_file_name_and_type(filename, filetype):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
+
     # Search for the file name in the file_names table
     cursor.execute('SELECT file_id FROM file_names WHERE name = ?', (filename,))
     file_ids = cursor.fetchall()
-    
+
     if not file_ids:
         return False  # No files with the given name found
-    
+
     # Check if any of the files have the same type
-    cursor.execute('SELECT filetype FROM files WHERE id IN ({})'.format(','.join('?' * len(file_ids))), 
+    cursor.execute('SELECT filetype FROM files WHERE id IN ({})'.format(','.join('?' * len(file_ids))),
                    [file_id[0] for file_id in file_ids])
     file_types = cursor.fetchall()
-    
+
     conn.close()
-    
+
     for existing_filetype in file_types:
         if existing_filetype[0] == filetype:
             return True  # File with the same name and type exists
-    
+
     return False  # No file with the same name and type found
 
 
@@ -131,37 +131,37 @@ def handle_client(client_socket):
             filetype = command.split(" == ")[2]
             if filename == "" and filetype == "":
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name 
-                    FROM files 
-                    JOIN file_names ON files.id = file_names.file_id 
+                    SELECT files.id, files.filetype, file_names.name
+                    FROM files
+                    JOIN file_names ON files.id = file_names.file_id
                     GROUP BY files.id
                     ''')
             elif filename == "":
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name 
-                    FROM files 
-                    JOIN file_names ON files.id = file_names.file_id 
-                    WHERE files.filetype = ? 
+                    SELECT files.id, files.filetype, file_names.name
+                    FROM files
+                    JOIN file_names ON files.id = file_names.file_id
+                    WHERE files.filetype = ?
                     GROUP BY files.id
                     ''', (filetype,))
             elif filetype == "":
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name 
-                    FROM files 
-                    JOIN file_names ON files.id = file_names.file_id 
-                    WHERE file_names.name LIKE ? 
+                    SELECT files.id, files.filetype, file_names.name
+                    FROM files
+                    JOIN file_names ON files.id = file_names.file_id
+                    WHERE file_names.name LIKE ?
                     GROUP BY files.id
                     ''', (f'%{filename}%',))
             else:
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name 
-                    FROM files 
-                    JOIN file_names ON files.id = file_names.file_id 
-                    WHERE file_names.name LIKE ? AND files.filetype = ? 
+                    SELECT files.id, files.filetype, file_names.name
+                    FROM files
+                    JOIN file_names ON files.id = file_names.file_id
+                    WHERE file_names.name LIKE ? AND files.filetype = ?
                     GROUP BY files.id
                     ''', (f'%{filename}%', filetype))
             results = cursor.fetchall()
-            
+
             if results:
                 client_socket.send(f'FOUND {len(results)}'.encode())
                 for result in results:
@@ -170,7 +170,7 @@ def handle_client(client_socket):
                     client_socket.recv(1048576)  # Wait for ACK
             else:
                 client_socket.send(b'NOT FOUND')
-        
+
         elif command.startswith('DOWNLOAD'):
             # filename = command.split(" == ")[1]
             # filetype = filename.split('.')[-1]
