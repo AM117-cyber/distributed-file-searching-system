@@ -164,10 +164,17 @@ def handle_client(client_socket):
 
             if results:
                 client_socket.send(f'FOUND {len(results)}'.encode())
-                for result in results:
-                    # filename.type == id
-                    client_socket.send(f'{result[2]}.{result[1]} == {result[0]}'.encode())
-                    client_socket.recv(1048576)  # Wait for ACK
+                ack = client_socket.recv(1048576).decode()
+                if ack == 'ACK':
+                    for result in results:
+                        # filename.type == id
+                        client_socket.send(f'{result[2]}.{result[1]} == {result[0]}'.encode())
+                        client_socket.recv(1048576)  # Wait for ACK
+
+                else:
+                    print("Error: Client did not acknowledge receipt of the FOUND message.")
+
+
             else:
                 client_socket.send(b'NOT FOUND')
 

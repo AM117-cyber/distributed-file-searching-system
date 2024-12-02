@@ -27,6 +27,8 @@ def upload_file(client_socket, filename):
 def search_file(client_socket, file_name, file_type):
     client_socket.send(f'SEARCH == {file_name} == {file_type}'.encode())
     response = client_socket.recv(1048576).decode()
+    # Después de recibir un archivo o un resultado, enviar un ACK al servidor
+    client_socket.send(b'ACK')
     if response.startswith('FOUND'):
         num_files = int(response.split()[1])
         search_results = {}
@@ -41,7 +43,7 @@ def search_file(client_socket, file_name, file_type):
         if command == 'DOWNLOAD':
             name = input("Enter the name of the file to download: ")
             download_file(client_socket, search_results[name])
-        
+
         elif command != 'RETURN':
             print("Invalid command. Please try again.")
     else:
