@@ -66,7 +66,7 @@ def download_file(client_socket, id):
 def main():
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        client_socket.connect(('localhost', 9999))  # Conecta al servidor en la red configurada
+        client_socket.connect(('10.0.11.2', 5000))  # Conecta al servidor en la red configurada
         print("Connected to server")
     except socket.error as e:
         print(f"Error connecting to server: {e}")

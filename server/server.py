@@ -203,7 +203,7 @@ def main():
         os.makedirs(FILE_DIR)
     setup_database()
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('localhost', 9999))
+    server_socket.bind(('0.0.0.0', 5000))
     server_socket.listen(5)
     print("Server listening...")
     while True:
