@@ -39,6 +39,31 @@ def setup_database():
     conn.commit()
     conn.close()
 
+def check_file_name_and_type(filename, filetype):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # Search for the file name in the file_names table
+    cursor.execute('SELECT file_id FROM file_names WHERE name = ?', (filename,))
+    file_ids = cursor.fetchall()
+    
+    if not file_ids:
+        return False  # No files with the given name found
+    
+    # Check if any of the files have the same type
+    cursor.execute('SELECT filetype FROM files WHERE id IN ({})'.format(','.join('?' * len(file_ids))), 
+                   [file_id[0] for file_id in file_ids])
+    file_types = cursor.fetchall()
+    
+    conn.close()
+    
+    for existing_filetype in file_types:
+        if existing_filetype[0] == filetype:
+            return True  # File with the same name and type exists
+    
+    return False  # No file with the same name and type found
+
+
 def calculate_file_hash(filepath):
     hasher = hashlib.md5()
     with open(filepath, 'rb') as f:
@@ -62,7 +87,8 @@ def handle_client(client_socket):
             filename = filename.split("."+filetype)[0]
             name_with_type = f"{filename}.{filetype}"
             filepath = os.path.join(FILE_DIR, name_with_type)
-            if os.path.exists(filepath):
+            invalid_name = check_file_name_and_type(filename, filetype)
+            if invalid_name:
                 client_socket.send(b'There is already a file with that name. Please change the name and try again.')
                 continue
             client_socket.send(b'Valid')
@@ -105,51 +131,58 @@ def handle_client(client_socket):
             filetype = command.split(" == ")[2]
             if filename == "" and filetype == "":
                 cursor.execute('''
-                    SELECT file_names.name 
+                    SELECT files.id, files.filetype, file_names.name 
                     FROM files 
                     JOIN file_names ON files.id = file_names.file_id 
                     GROUP BY files.id
-                ''')
+                    ''')
             elif filename == "":
                 cursor.execute('''
-                    SELECT file_names.name 
+                    SELECT files.id, files.filetype, file_names.name 
                     FROM files 
                     JOIN file_names ON files.id = file_names.file_id 
                     WHERE files.filetype = ? 
                     GROUP BY files.id
-                ''', (filetype,))
+                    ''', (filetype,))
             elif filetype == "":
                 cursor.execute('''
-                    SELECT file_names.name 
+                    SELECT files.id, files.filetype, file_names.name 
                     FROM files 
                     JOIN file_names ON files.id = file_names.file_id 
                     WHERE file_names.name LIKE ? 
                     GROUP BY files.id
-                ''', (f'%{filename}%',))
+                    ''', (f'%{filename}%',))
             else:
                 cursor.execute('''
-                    SELECT file_names.name 
+                    SELECT files.id, files.filetype, file_names.name 
                     FROM files 
                     JOIN file_names ON files.id = file_names.file_id 
                     WHERE file_names.name LIKE ? AND files.filetype = ? 
                     GROUP BY files.id
-                ''', (f'%{filename}%', filetype))
+                    ''', (f'%{filename}%', filetype))
             results = cursor.fetchall()
-            
+    
             if results:
                 client_socket.send(f'FOUND {len(results)}'.encode())
                 for result in results:
-                    client_socket.send(result[0].encode())
+                    # filename.type == id
+                    client_socket.send(f'{result[2]}.{result[1]} == {result[0]}'.encode())
                     client_socket.recv(1048576)  # Wait for ACK
             else:
                 client_socket.send(b'NOT FOUND')
+
         
         elif command.startswith('DOWNLOAD'):
-            filename = command.split(" == ")[1]
-            filetype = filename.split('.')[-1]
-            filename = filename.split("."+filetype)[0]
-            name_with_type = f"{filename}.{filetype}"
-            filepath = os.path.join(FILE_DIR, name_with_type)
+            # filename = command.split(" == ")[1]
+            # filetype = filename.split('.')[-1]
+            # filename = filename.split("."+filetype)[0]
+            # name_with_type = f"{filename}.{filetype}"
+            # filepath = os.path.join(FILE_DIR, name_with_type)
+            id = command.split(" == ")[1]
+            cursor.execute('SELECT filepath FROM files WHERE id = ?', (id))
+            result = cursor.fetchone()
+            if result:
+                filepath = result[0]  # Extract the file path from the tuple
             if os.path.exists(filepath):
                 filesize = os.path.getsize(filepath)
                 client_socket.send(f"FileSize {filesize}".encode())
@@ -171,7 +204,7 @@ def main():
         os.makedirs(FILE_DIR)
     setup_database()
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', 5000))
+    server_socket.bind(('localhost', 9999))
     server_socket.listen(5)
     print("Server listening...")
     while True:

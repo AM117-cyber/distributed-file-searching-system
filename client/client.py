@@ -29,19 +29,30 @@ def search_file(client_socket, file_name, file_type):
     response = client_socket.recv(1048576).decode()
     if response.startswith('FOUND'):
         num_files = int(response.split()[1])
+        search_results = {}
         for _ in range(num_files):
-            filename = client_socket.recv(1048576).decode()
-            print(f"Found: {filename}")
+            result = client_socket.recv(1048576).decode()
+            name = result.split(" == ")[0]
+            id = result.split(" == ")[1]
+            search_results[name] = id
+            print(f"Found: {name}")
             client_socket.send(b'ACK')
+        command = input("Enter command (DOWNLOAD, RETURN): ")
+        if command == 'DOWNLOAD':
+            name = input("Enter the name of the file to download: ")
+            download_file(client_socket, search_results[name])
+        
+        elif command != 'RETURN':
+            print("Invalid command. Please try again.")
     else:
         print("No files found")
 
-def download_file(client_socket, filename):
-    client_socket.send(f'DOWNLOAD == {filename}'.encode())
+def download_file(client_socket, id):
+    client_socket.send(f'DOWNLOAD == {id}'.encode())
     response = client_socket.recv(1048576).decode()
     if response.startswith('FileSize'):
         filesize = int(response.split()[1])
-        download_path = os.path.join(FILEPATH, 'downloaded_' + filename)
+        download_path = os.path.join(FILEPATH, 'downloaded_' + id)
         with open(download_path, 'wb') as f:
             bytes_received = 0
             while bytes_received < filesize:
@@ -55,7 +66,7 @@ def download_file(client_socket, filename):
 def main():
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        client_socket.connect(('10.0.11.2', 5000))  # Conecta al servidor en la red configurada
+        client_socket.connect(('localhost', 9999))  # Conecta al servidor en la red configurada
         print("Connected to server")
     except socket.error as e:
         print(f"Error connecting to server: {e}")
