@@ -73,7 +73,7 @@ def main():
         return
 
     while True:
-        command = input("Enter command (UPLOAD, SEARCH, DOWNLOAD, EXIT): ")
+        command = input("Enter command (UPLOAD, SEARCH, EXIT): ")
         if command.startswith('UPLOAD'):
             filename = input("Enter the name of the file to upload: ")
             upload_file(client_socket, filename)
@@ -81,9 +81,6 @@ def main():
             filename = input("Enter file name: ")
             file_type = input("Enter file type: ")
             search_file(client_socket, filename, file_type)
-        elif command.startswith('DOWNLOAD'):
-            filename = input("Enter the name of the file to download: ")
-            download_file(client_socket, filename)
         elif command == 'EXIT':
             client_socket.send(b'EXIT')
             client_socket.close()
