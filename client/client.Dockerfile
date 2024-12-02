@@ -11,9 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm 
 COPY client/client.py ./client.py
 COPY client/client.sh /usr/local/bin/client.sh
 
-# Copiar los archivos del cliente
-COPY client/client_files /app/client_files
-
 # Asegúrate de que el script sea ejecutable
 RUN chmod +x /usr/local/bin/client.sh
 
