@@ -76,7 +76,7 @@ def calculate_file_hash(filepath):
 def handle_client(client_socket):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
+
     while True:
         command = client_socket.recv(1048576).decode()
 
@@ -95,7 +95,7 @@ def handle_client(client_socket):
             # Compare metadata first
             cursor.execute('SELECT id, hash FROM files WHERE filesize = ? AND filetype = ?', (filesize, filetype))
             potential_duplicates = cursor.fetchall()
-            
+
             duplicate_found = False
             with open(filepath, 'wb') as f:
                 bytes_received = 0
@@ -105,7 +105,7 @@ def handle_client(client_socket):
                     bytes_received += len(data)
             my_hash = calculate_file_hash(filepath)
             for file_id, hash in potential_duplicates:
-                
+
                 if my_hash == hash:
                     # file is the same
                     cursor.execute('SELECT name FROM file_names WHERE file_id = ? AND name = ?', (file_id, filename))
@@ -117,15 +117,15 @@ def handle_client(client_socket):
                     client_socket.send(b'UPLOAD SUCCESS (duplicate)')
                     duplicate_found = True
                     break
-            
+
             if not duplicate_found:
-                cursor.execute('INSERT INTO files (filetype, filesize, filepath, hash) VALUES (?, ?, ?, ?)', 
+                cursor.execute('INSERT INTO files (filetype, filesize, filepath, hash) VALUES (?, ?, ?, ?)',
                                (filetype, filesize, filepath, my_hash))
                 file_id = cursor.lastrowid
                 cursor.execute('INSERT INTO file_names (file_id, name) VALUES (?, ?)', (file_id, filename))
                 conn.commit()
                 client_socket.send(b'UPLOAD SUCCESS')
-        
+
         elif command.startswith('SEARCH'):
             filename = command.split(" == ")[1]
             filetype = command.split(" == ")[2]
@@ -161,7 +161,7 @@ def handle_client(client_socket):
                     GROUP BY files.id
                     ''', (f'%{filename}%', filetype))
             results = cursor.fetchall()
-    
+            
             if results:
                 client_socket.send(f'FOUND {len(results)}'.encode())
                 for result in results:
@@ -170,7 +170,6 @@ def handle_client(client_socket):
                     client_socket.recv(1048576)  # Wait for ACK
             else:
                 client_socket.send(b'NOT FOUND')
-
         
         elif command.startswith('DOWNLOAD'):
             # filename = command.split(" == ")[1]
@@ -193,7 +192,7 @@ def handle_client(client_socket):
                         data = f.read(1048576)
             else:
                 client_socket.send(b'ERROR File not found')
-        
+
         elif command == 'EXIT':
             client_socket.close()
             break
