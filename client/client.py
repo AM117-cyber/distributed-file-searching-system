@@ -12,6 +12,7 @@ def upload_file(client_socket, filename):
         client_socket.send(f'UPLOAD == {filename} == {filesize}'.encode())
         confirm = client_socket.recv(1048576).decode()
         print(confirm)
+        client_socket.send(f'ACK'.encode())
         if confirm.startswith('Valid'):
             with open(filepath, 'rb') as f:
                 data = f.read(1048576)
@@ -42,19 +43,21 @@ def search_file(client_socket, file_name, file_type):
         command = input("Enter command (DOWNLOAD, RETURN): ")
         if command == 'DOWNLOAD':
             name = input("Enter the name of the file to download: ")
-            download_file(client_socket, search_results[name])
+            download_file(client_socket, search_results[name], name)
 
         elif command != 'RETURN':
             print("Invalid command. Please try again.")
     else:
         print("No files found")
 
-def download_file(client_socket, id):
+def download_file(client_socket, id, name_with_type):
     client_socket.send(f'DOWNLOAD == {id}'.encode())
     response = client_socket.recv(1048576).decode()
+    
     if response.startswith('FileSize'):
+        client_socket.send(b'ACK')
         filesize = int(response.split()[1])
-        download_path = os.path.join(FILEPATH, 'downloaded_' + id)
+        download_path = os.path.join(FILEPATH, name_with_type)
         with open(download_path, 'wb') as f:
             bytes_received = 0
             while bytes_received < filesize:

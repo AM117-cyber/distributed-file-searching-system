@@ -22,10 +22,10 @@ def setup_database():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filetype TEXT,
             filesize INTEGER,
             filepath TEXT,
             hash TEXT
+            UNIQUE(filepath)
         )
     ''')
     cursor.execute('''
@@ -33,7 +33,9 @@ def setup_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id INTEGER,
             name TEXT,
+            filetype TEXT,
             FOREIGN KEY (file_id) REFERENCES files (id)
+            UNIQUE(file_id,name,filetype)
         )
     ''')
     conn.commit()
@@ -44,24 +46,16 @@ def check_file_name_and_type(filename, filetype):
     cursor = conn.cursor()
 
     # Search for the file name in the file_names table
-    cursor.execute('SELECT file_id FROM file_names WHERE name = ?', (filename,))
+    cursor.execute('SELECT file_id FROM file_names WHERE name = ? AND type = ?', (filename,filetype))
     file_ids = cursor.fetchall()
+    conn.close()
 
     if not file_ids:
         return False  # No files with the given name found
+    return True
 
-    # Check if any of the files have the same type
-    cursor.execute('SELECT filetype FROM files WHERE id IN ({})'.format(','.join('?' * len(file_ids))),
-                   [file_id[0] for file_id in file_ids])
-    file_types = cursor.fetchall()
+    
 
-    conn.close()
-
-    for existing_filetype in file_types:
-        if existing_filetype[0] == filetype:
-            return True  # File with the same name and type exists
-
-    return False  # No file with the same name and type found
 
 
 def calculate_file_hash(filepath):
@@ -92,8 +86,11 @@ def handle_client(client_socket):
                 client_socket.send(b'There is already a file with that name. Please change the name and try again.')
                 continue
             client_socket.send(b'Valid')
+            ack = client_socket.recv(1048576).decode()
+            if ack != 'ACK':
+                continue
             # Compare metadata first
-            cursor.execute('SELECT id, hash FROM files WHERE filesize = ? AND filetype = ?', (filesize, filetype))
+            cursor.execute('SELECT id, hash FROM files WHERE filesize = ?', (filesize))
             potential_duplicates = cursor.fetchall()
 
             duplicate_found = False
@@ -111,7 +108,7 @@ def handle_client(client_socket):
                     cursor.execute('SELECT name FROM file_names WHERE file_id = ? AND name = ?', (file_id, filename))
                     name_result = cursor.fetchone()
                     if not name_result:
-                        cursor.execute('INSERT INTO file_names (file_id, name) VALUES (?, ?)', (file_id, filename))
+                        cursor.execute('INSERT INTO file_names (file_id, name, filetype) VALUES (?, ?)', (file_id, filename,filetype))
                         conn.commit()
                     os.remove(filepath)  # Remove the duplicate file
                     client_socket.send(b'UPLOAD SUCCESS (duplicate)')
@@ -119,10 +116,10 @@ def handle_client(client_socket):
                     break
 
             if not duplicate_found:
-                cursor.execute('INSERT INTO files (filetype, filesize, filepath, hash) VALUES (?, ?, ?, ?)',
-                               (filetype, filesize, filepath, my_hash))
+                cursor.execute('INSERT INTO files (filesize, filepath, hash) VALUES (?, ?, ?, ?)',
+                               (filesize, filepath, my_hash))
                 file_id = cursor.lastrowid
-                cursor.execute('INSERT INTO file_names (file_id, name) VALUES (?, ?)', (file_id, filename))
+                cursor.execute('INSERT INTO file_names (file_id, name, filetype) VALUES (?, ?)', (file_id, filename, filetype))
                 conn.commit()
                 client_socket.send(b'UPLOAD SUCCESS')
 
@@ -131,14 +128,14 @@ def handle_client(client_socket):
             filetype = command.split(" == ")[2]
             if filename == "" and filetype == "":
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name
+                    SELECT files.id, file_names.filetype, file_names.name
                     FROM files
                     JOIN file_names ON files.id = file_names.file_id
                     GROUP BY files.id
                     ''')
             elif filename == "":
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name
+                    SELECT files.id, file_names.filetype, file_names.name
                     FROM files
                     JOIN file_names ON files.id = file_names.file_id
                     WHERE files.filetype = ?
@@ -146,7 +143,7 @@ def handle_client(client_socket):
                     ''', (filetype,))
             elif filetype == "":
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name
+                    SELECT files.id, file_names.filetype, file_names.name
                     FROM files
                     JOIN file_names ON files.id = file_names.file_id
                     WHERE file_names.name LIKE ?
@@ -154,7 +151,7 @@ def handle_client(client_socket):
                     ''', (f'%{filename}%',))
             else:
                 cursor.execute('''
-                    SELECT files.id, files.filetype, file_names.name
+                    SELECT files.id, file_names.filetype, file_names.name
                     FROM files
                     JOIN file_names ON files.id = file_names.file_id
                     WHERE file_names.name LIKE ? AND files.filetype = ?
@@ -192,11 +189,13 @@ def handle_client(client_socket):
             if os.path.exists(filepath):
                 filesize = os.path.getsize(filepath)
                 client_socket.send(f"FileSize {filesize}".encode())
-                with open(filepath, 'rb') as f:
-                    data = f.read(1048576)
-                    while data:
-                        client_socket.send(data)
+                ack = client_socket.recv(1048576).decode()
+                if ack == 'ACK':
+                    with open(filepath, 'rb') as f:
                         data = f.read(1048576)
+                        while data:
+                            client_socket.send(data)
+                            data = f.read(1048576)
             else:
                 client_socket.send(b'ERROR File not found')
 
