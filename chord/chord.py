@@ -6,6 +6,7 @@ import threading
 import time
 import random
 import sys
+from storage_layer import *
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -56,6 +57,11 @@ class ChordNodeReference:
         req = {"method": "notify", "params": {"candidate": candidate}}
         return self._send_zmq_request(req)
 
+    def storeFile(self, name: str, file_type: str, content: bytes):
+        # Se envía la petición de almacenar archivo, convirtiendo los bytes a string (latin1)
+        req = {"method": "storeFile", "params": {"name": name, "type": file_type, "content": content.decode('latin1')}}
+        return self._send_zmq_request(req)
+
     def _send_zmq_request(self, req: dict):
         """
         Crea un socket REQ, se conecta a (self.ip, self.port), envía 'req' en JSON y lee respuesta.
@@ -103,6 +109,9 @@ class ChordNode:
         self.successor = (self.node_id, self.my_ip, self.my_port)
 
         self.finger = [(None, None)] * m_bits
+
+        self.storage = StorageLayer(db_path=f"node_{my_port}_files.db")
+
 
         logging.info(f"[INIT] ChordNode - ID={self.node_id} - Escuchando en {my_ip}:{my_port}")
 
@@ -257,11 +266,23 @@ class ChordNode:
         ref = ChordNodeReference(ip, port, self.m_bits)
         return ref.notify(candidate)
 
+    def upload_file(self, name: str, file_type: str, content: bytes) -> str:
+        """
+        Calcula la clave de enrutamiento usando el hash de nombre y tipo,
+        busca el nodo responsable y delega (o almacena localmente) el archivo.
+        """
+        h_name_type = self.storage._hash_name_type(name, file_type)
+        routing_key = int(h_name_type, 16) % self.modulo
+        successor = self.findSuccessor(routing_key)
+        if successor[0] == self.node_id:
+            logging.info(f"[upload_file] Nodo {self.node_id} es responsable. Almacenando localmente.")
+            return self.storage.store_file(name, file_type, content)
+        else:
+            logging.info(f"[upload_file] Nodo {self.node_id} delega en {successor}.")
+            remote_ref = ChordNodeReference(successor[1], successor[2], self.m_bits)
+            return remote_ref.storeFile(name, file_type, content)
 
     def handle_message(self, req: dict):
-        """
-        Invocado cuando llega un mensaje en modo REP. Retorna dict con 'result'/'error'.
-        """
         method = req.get("method")
         params = req.get("params", {})
 
@@ -270,28 +291,38 @@ class ChordNode:
                 key_id = params["key_id"]
                 r = self.findSuccessor(key_id)
                 return {"result": r}
-
             elif method == "closestPrecedingFinger":
                 key_id = params["key_id"]
                 r = self.closestPrecedingFinger(key_id)
                 return {"result": r}
-
             elif method == "getSuccessor":
                 return {"result": self.successor}
-
             elif method == "getPredecessor":
                 return {"result": self.predecessor}
-
             elif method == "notify":
                 candidate = params["candidate"]
                 self.notify(candidate)
                 return {"result": True}
-
+            elif method == "storeFile":
+                name = params["name"]
+                file_type = params["type"]
+                content_str = params["content"]
+                content = content_str.encode('latin1')
+                key = self.storage.store_file(name, file_type, content)
+                return {"result": key}
+            elif method == "retrieveFile":
+                key = params["key"]
+                file_data = self.storage.retrieve_file(key)
+                if file_data is not None:
+                    file_data["content"] = file_data["content"].decode('latin1')
+                return {"result": file_data}
+            elif method == "retrieve_all_files":
+                all_files = self.storage.retrieve_all_files()
+                return {"result": all_files}
             else:
                 return {"error": f"Método desconocido: {method}", "result": None}
-
         except Exception as e:
-            logging.error(f"[handle_message] => excepción: {e}")
+            logging.error(f"[handle_message] excepción: {e}")
             return {"error": str(e), "result": None}
 
 
@@ -328,9 +359,9 @@ def maintenance_loop(chord_node: ChordNode):
         chord_node.stabilize()
         chord_node.fixFingers()
 
-
 if __name__ == "__main__":
-    logging.info("=== Iniciando prueba de anillo Chord con clases separadas ===")
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
+    logging.info("=== Iniciando prueba de Chord con StorageLayer y Retrieval ===")
 
     # Nodo A
     nodeA = ChordNode(my_ip="127.0.0.1", my_port=6000, m_bits=16)
@@ -362,17 +393,45 @@ if __name__ == "__main__":
     logging.info("Esperando ~10s para que se estabilice el anillo...")
     time.sleep(10)
 
-    # Probar algunas consultas
-    test_key = sha1_hash("test-key") % (2**16)
-    logging.info(f"Buscando sucesor de {test_key} via nodeA...")
-    resA = nodeA.findSuccessor(test_key)
-    logging.info(f"nodeA => findSuccessor({test_key}) = {resA}")
+    # ------------------- Pruebas de Almacenamiento -------------------
+    # Archivo 1: desde nodeA
+    file1_name = "documento.txt"
+    file1_type = "text/plain"
+    file1_content = b"Contenido del documento 1"
+    key1 = nodeA.upload_file(file1_name, file1_type, file1_content)
+    logging.info(f"Archivo subido: {file1_name} con key {key1}")
 
-    logging.info("Buscando Predecessor(10000) via nodeB...")
-    resB = nodeB.findPredecessor(10000)
-    logging.info(f"nodeB => findPredecessor(10000) = {resB}")
+    # Archivo 2: mismo nombre y tipo, pero contenido diferente, desde nodeB
+    file2_name = "documento.txt"
+    file2_type = "text/plain"
+    file2_content = b"Contenido diferente del documento 1"
+    key2 = nodeB.upload_file(file2_name, file2_type, file2_content)
+    logging.info(f"Archivo subido: {file2_name} con key {key2}")
 
-    logging.info("Nodos levantados y probados. Se quedan en funcionamiento... (Ctrl+C para salir)")
+    # Archivo 3: desde nodeC
+    file3_name = "imagen.png"
+    file3_type = "image/png"
+    file3_content = b"Datos de la imagen"
+    key3 = nodeC.upload_file(file3_name, file3_type, file3_content)
+    logging.info(f"Archivo subido: {file3_name} con key {key3}")
+
+    # ------------------- Pruebas de Recuperación -------------------
+    # Recuperar archivo 1 (usando nodeA, que es responsable o delega según corresponda)
+    req_all_A = {"method": "retrieve_all_files", "params": {}}
+    result_all_A = nodeA.handle_message(req_all_A)
+    logging.info(f"Recuperados todos los archivos en nodo A: {result_all_A}")
+
+    # Se recuperan todos los archivos almacenados en el nodo B
+    req_all_B = {"method": "retrieve_all_files", "params": {}}
+    result_all_B = nodeB.handle_message(req_all_B)
+    logging.info(f"Recuperados todos los archivos en nodo B: {result_all_B}")
+
+    req_all_C = {"method": "retrieve_all_files", "params": {}}
+    result_all_C = nodeC.handle_message(req_all_C)
+    logging.info(f"Recuperados todos los archivos en nodo C: {result_all_C}")
+
+
+    logging.info("Pruebas de almacenamiento y recuperación completadas. Los nodos permanecen en funcionamiento... (Ctrl+C para salir)")
     try:
         while True:
             time.sleep(9999)
