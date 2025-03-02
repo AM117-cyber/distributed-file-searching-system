@@ -299,12 +299,14 @@ class ChordNode:
 
     def _init_db(self):
         logger.debug("Inicializando esquema de base de datos")
+        
         self.cursor.execute('''
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hash TEXT UNIQUE NOT NULL,
             content BLOB NOT NULL,
             type TEXT NOT NULL
+            
         )
         ''')
 
@@ -358,6 +360,37 @@ class ChordNode:
             except Exception as e:
                 logger.error(f"Error al guardar archivo '{file_name}': {e}", exc_info=True)
                 return f"Error al guardar archivo: {e}"
+            
+    def broadcast_search(self, file_name, file_type):
+        results = []
+        broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        broadcast_socket.settimeout(3)
+
+        message = f"{SEARCH_FILE},{file_name},{file_type}"
+        broadcast_socket.sendto(message.encode(), (BROADCAST_ADDRESS, BROADCAST_PORT))
+
+        def handle_response(m):
+            if m.startswith("SEARCH_RESULT~"):
+                    Elements=eval(m.split("~")[1])
+                    with self.lock:
+                        for e in Elements:
+                            if e not in results: results.append(e)
+
+        while True:
+            try:
+                data, addr = broadcast_socket.recvfrom(1024)
+                response = data.decode()
+                threading.Thread(
+                    target=handle_response,
+                    args=(response,),
+                    daemon=True
+                ).start()
+            except socket.timeout:
+                break
+        broadcast_socket.close()
+        print(results)
+        return results
 
 
     def search_file(self, file_name, file_type):
@@ -928,46 +961,19 @@ class ChordNode:
                 conn.send(response.encode())
 
             elif option == SEARCH_FILE:
-                # data = [ '11', file_name, file_type ]
-                file_name, file_type = data[1], data[2]
-
-                # 1) Construir un hash que identifique el archivo por (nombre, tipo)
-                #    Si deseas otra lógica (p.ej. con contenido), adáptala.
-                fid_str = f"{file_name}:{file_type}"
-                fid = getShaRepr(fid_str)
-
-                logger.info(f"[BÚSQUEDA] Solicitud de búsqueda Chord para '{file_name}' (tipo '{file_type}'). "
-                            f"Clave = '{fid_str}', hash={fid}")
-
-                # 2) Hallar el sucesor responsable
-                responsable = self.find_succ(fid)
-
-                if responsable.id == self.id:
-                    # 3) Este nodo es responsable → búsqueda local en DB
-                    logger.info(f"[BÚSQUEDA] Soy responsable de la clave {fid}. Buscando en DB local.")
-                    local_results = self.search_file(file_name, file_type)
-                    logger.info(f"[BÚSQUEDA] Encontrados {len(local_results)} resultados en mi DB.")
-                    conn.sendall(str(local_results).encode())
-
-                else:
-                    # 4) Reenviamos la búsqueda al nodo responsable
-                    logger.info(f"[BÚSQUEDA] El responsable es {responsable.ip}. Reenviando petición SEARCH_FILE al nodo responsable.")
-                    # Hacemos una llamada TCP al otro nodo
-                    # para que él ejecute la MISMA operación (SEARCH_FILE)
-                    # con la misma data (file_name, file_type).
-                    try:
-                        forward_resp = responsable._send_data(SEARCH_FILE, f"{file_name},{file_type}")
-                        logger.info(f"[BÚSQUEDA] Recibida respuesta del responsable {responsable.ip}: {forward_resp.decode(errors='ignore')}")
-                        # Enviamos esa respuesta al cliente que hizo la petición
-                        conn.sendall(forward_resp)
-                    except Exception as e:
-                        msg_error = f"[BÚSQUEDA] Error reenviando a {responsable.ip}: {e}"
-                        logger.error(msg_error)
-                        conn.sendall(str(msg_error).encode())
+                file_name,file_type= data[1],data[2]
+                try:
+                    results= self.broadcast_search(file_name,file_type)
+                    conn.sendall(str(results).encode())
+                except Exception as e:
+                    logger.error(f"Búsqueda por broadcast fallada: {e}")
+                    conn.sendall("ERROR DURANTE LA BUSQUEDA POR BROADCAST".encode())
 
             elif option == DOWNLOAD_FILE:
-                file_name = data[1]
-                response = self.download_file(file_name)
+                file_hash = data[1]
+                logger.debug("Buscando sucesor responsable del archivo a descargar")
+                responsible_node = self.find_succ(file_hash)
+                response = responsible_node.download_file(file_hash)
                 conn.send(f'{len(response)}'.encode())
                 conn.recv(1024).decode()
                 for i in range(0, len(response), 1024000):
