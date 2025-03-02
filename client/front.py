@@ -264,11 +264,13 @@ def client_program():
             st.header("Search for Files")
             file_name = st.text_input("Enter file name")
             file_type = st.text_input("Enter file type")
-            if st.button("Search"):
+            if st.button("Search") and st.session_state.action != UPLOAD_FILE:
+                st.session_state.action = SEARCH_FILE
                 # Get the search results
                 results = search_file(file_name, file_type)
 
                 if results:
+                    st.session_state.action = None
                 # Create a mapping of display strings to actual results
                     display_options = [f"{result['name']} - {result['type']}" for result in results]
 
@@ -284,7 +286,7 @@ def client_program():
                         st.write("You selected:")
                         st.json(selected_result)  # Display details of the selected file
 
-                        if st.button("Download"):
+                        if st.button("Download") and not st.session_state.action:
                             download_file(selected_result['hash'], selected_result['name'])
 
             # Close connection
