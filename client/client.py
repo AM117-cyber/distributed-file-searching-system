@@ -3,7 +3,17 @@ import socket
 import struct
 import time
 
+
 CLIENT_FILES_DIR = "/app/client_files"
+DOWNLOADS_DIR = "/app/downloads"
+
+if not os.path.exists(CLIENT_FILES_DIR):
+    os.makedirs(CLIENT_FILES_DIR, exist_ok=True)
+    print(f"[INFO] Se ha creado la carpeta de archivos a subir: {CLIENT_FILES_DIR}")
+if not os.path.exists(DOWNLOADS_DIR):
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    print(f"[INFO] Se ha creado la carpeta de descargas: {DOWNLOADS_DIR}")
+
 
 MULTICAST_GROUP = '224.0.0.1'
 MULTICAST_PORT = 10000
@@ -206,7 +216,7 @@ def download_file(command):
 
             client_socket.sendall("ACK".encode('utf-8'))
 
-            local_filename = os.path.join(CLIENT_FILES_DIR, results[index]['name'])
+            local_filename = os.path.join(DOWNLOADS_DIR, results[index]['name'])
             print(f"[INFO] Descargando el archivo y guardándolo en: {local_filename}")
             remainder = file_size
             with open(local_filename, 'wb') as f:
@@ -238,7 +248,7 @@ def client_program():
                 "\nOptions:\n"
                 "  upload <path>   (file in CLIENT_FILES_DIR: " + CLIENT_FILES_DIR + ")\n"
                 "  download <name>.<tipe>\n"
-                "  salir\n"
+                "  exit\n"
             )
             command = input(prompt).strip()
             if command.startswith("upload"):
