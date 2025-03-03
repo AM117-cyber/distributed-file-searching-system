@@ -8,6 +8,7 @@ import struct
 import json
 import logging
 import traceback
+import ssl
 
 # Configuración del sistema de logging
 logging.basicConfig(
@@ -64,14 +65,26 @@ class ChordNodeReference:
 
     def _send_data(self, op: int, data: str = None) -> bytes:
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((self.ip, self.port))
-                s.sendall(f'{op},{data}'.encode('utf-8'))
-                logger.debug(f"Enviada operación {op} a {self.ip}:{self.port}")
-                return s.recv(1024)
+            # Crear socket base
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_sock:
+                raw_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                raw_sock.connect((self.ip, self.port))
+
+                # Envolver la conexión con SSL (siempre para conexiones entre nodos)
+                # Puedes agregar un chequeo si self.ip == local_ip, pero en el anillo normalmente queremos SSL.
+                context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE  # Para pruebas; en producción, usa CERT_REQUIRED y carga CA
+                with context.wrap_socket(raw_sock, server_hostname=self.ip) as ssl_sock:
+                    logger.debug(f"Socket envuelto con SSL para conexión a {self.ip}:{self.port}")
+                    ssl_sock.sendall(f'{op},{data}'.encode('utf-8'))
+                    logger.debug(f"Enviada operación {op} a {self.ip}:{self.port}")
+                    return ssl_sock.recv(1024)
         except Exception as e:
             logger.error(f"Error enviando operación {op} a {self.ip}:{self.port}: {e}")
             return b''
+
+
 
     def find_successor(self, id: int) -> 'ChordNodeReference':
         logger.debug(f"Buscando sucesor del ID {id} a través de nodo {self.ip}")
@@ -127,59 +140,67 @@ class ChordNodeReference:
     def save_file(self, file_name, file_type, file_content, file_size):
         try:
             logger.info(f"Enviando archivo '{file_name}' ({file_type}, {file_size} bytes) a nodo {self.ip}")
-            s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.connect((self.ip, self.port))
-            s.send(f"{10},{file_name},{file_type},{file_size}".encode())
-            logger.debug(f"Solicitud de guardado de archivo enviada a {self.ip}")
-
-            ready = s.recv(1024).decode()
-            if ready == 'READY':
-                logger.info(f"Nodo {self.ip} listo para recibir. Enviando contenido...")
-                bytes_sent = 0
-                for i in range(0, len(file_content), 1024000):
-                    chunk = file_content[i:i+1024000]
-                    s.send(chunk)
-                    bytes_sent += len(chunk)
-                    if bytes_sent % (5*1024*1024) == 0:  # Log cada 5MB
-                        logger.debug(f"Enviados {bytes_sent}/{file_size} bytes a {self.ip}")
-                logger.info(f"Transferencia a {self.ip} completada ({file_size} bytes)")
-            response = s.recv(1024)
-            logger.info(f"Respuesta de guardado de archivo de {self.ip}: {response.decode()}")
-            s.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_sock:
+                raw_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                raw_sock.connect((self.ip, self.port))
+                # Crear contexto SSL para cliente:
+                context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE  # Para pruebas; en producción usar CERT_REQUIRED y certificados válidos.
+                with context.wrap_socket(raw_sock, server_hostname=self.ip) as ssl_sock:
+                    ssl_sock.sendall(f"{UPLOAD_FILE},{file_name},{file_type},{file_size}".encode('utf-8'))
+                    logger.debug(f"Solicitud de guardado de archivo enviada a {self.ip}")
+                    ready = ssl_sock.recv(1024).decode()
+                    if ready == 'READY':
+                        logger.info(f"Nodo {self.ip} listo para recibir. Enviando contenido...")
+                        bytes_sent = 0
+                        for i in range(0, len(file_content), 1024000):
+                            chunk = file_content[i:i+1024000]
+                            ssl_sock.sendall(chunk)
+                            bytes_sent += len(chunk)
+                            if bytes_sent % (5*1024*1024) == 0:
+                                logger.debug(f"Enviados {bytes_sent}/{file_size} bytes a {self.ip}")
+                        logger.info(f"Transferencia a {self.ip} completada ({file_size} bytes)")
+                    response = ssl_sock.recv(1024)
+                    logger.info(f"Respuesta de guardado de archivo de {self.ip}: {response.decode()}")
+                    return response
         except Exception as e:
             logger.error(f"Error al guardar archivo en {self.ip}: {e}", exc_info=True)
-            response = "ERROR".encode()
-        return response
+            return "ERROR".encode()
+
+
 
     def replic(self, file_name, file_type, file_content, file_size):
         try:
             logger.info(f"[REPLICACIÓN] Iniciando replicación de '{file_name}' ({file_type}, {file_size} bytes) a {self.ip}")
-            s=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.connect((self.ip, self.port))
-            s.send(f"{14},{file_name},{file_type},{file_size}".encode())
-            logger.debug(f"[REPLICACIÓN] Solicitud enviada a {self.ip}")
-
-            ready = s.recv(1024).decode()
-            if ready == 'READY':
-                logger.info(f"[REPLICACIÓN] Nodo {self.ip} listo. Iniciando transferencia...")
-                bytes_sent = 0
-                for i in range(0, len(file_content), 1024000):
-                    chunk = file_content[i:i+1024000]
-                    s.send(chunk)
-                    bytes_sent += len(chunk)
-                    if bytes_sent % (5*1024*1024) == 0:  # Log cada 5MB
-                        logger.debug(f"[REPLICACIÓN] Progreso: {bytes_sent}/{file_size} bytes ({bytes_sent*100/file_size:.1f}%)")
-                logger.info(f"[REPLICACIÓN] Transferencia a {self.ip} completada")
-
-            response = s.recv(1024)
-            logger.info(f"[REPLICACIÓN] Respuesta de {self.ip}: {response.decode()}")
-            s.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_sock:
+                raw_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                raw_sock.connect((self.ip, self.port))
+                # Crear contexto SSL para cliente:
+                context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                with context.wrap_socket(raw_sock, server_hostname=self.ip) as ssl_sock:
+                    ssl_sock.sendall(f"{REPLIC},{file_name},{file_type},{file_size}".encode('utf-8'))
+                    logger.debug(f"[REPLICACIÓN] Solicitud enviada a {self.ip}")
+                    ready = ssl_sock.recv(1024).decode()
+                    if ready == 'READY':
+                        logger.info(f"[REPLICACIÓN] Nodo {self.ip} listo. Iniciando transferencia...")
+                        bytes_sent = 0
+                        for i in range(0, len(file_content), 1024000):
+                            chunk = file_content[i:i+1024000]
+                            ssl_sock.sendall(chunk)
+                            bytes_sent += len(chunk)
+                            if bytes_sent % (5*1024*1024) == 0:
+                                logger.debug(f"[REPLICACIÓN] Progreso: {bytes_sent}/{file_size} bytes ({bytes_sent*100/file_size:.1f}%)")
+                        logger.info(f"[REPLICACIÓN] Transferencia a {self.ip} completada")
+                    response = ssl_sock.recv(1024)
+                    logger.info(f"[REPLICACIÓN] Respuesta de {self.ip}: {response.decode()}")
+                    return response
         except Exception as e:
             logger.error(f"[REPLICACIÓN] Error replicando a {self.ip}: {e}", exc_info=True)
-            response = "ERROR".encode()
-        return response
+            return "ERROR".encode()
+
 
     def remove_file(self, file_name: str):
         """
@@ -225,6 +246,9 @@ class ChordNode:
         self.replication_ok = True
         self.known_nodes = set()
         self.known_nodes.add(self.ip)
+        self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.ssl_context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+
 
 
 
@@ -1056,19 +1080,31 @@ class ChordNode:
         finally:
             sock.close()
 
-
     def start_server(self):
-        # logger.info(f"Iniciando servidor en {self.ip}:{self.port}")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setblocking(True)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((self.ip, self.port))
             s.listen(10)
-
+            logger.info(f"Servidor escuchando en {self.ip}:{self.port}...")
             while True:
                 conn, addr = s.accept()
-                logger.debug(f"Conexión aceptada de {addr}")
-                threading.Thread(target=self.serve_client, args=(conn,), daemon=True).start()
+                logger.debug(f"Conexión TCP aceptada de {addr}")
+                # Verifica si la IP de origen es externa
+                # if addr[0] != self.ip:
+                try:
+                    ssl_conn = self.ssl_context.wrap_socket(conn, server_side=True)
+                    logger.info(f"Conexión SSL establecida con {addr}")
+                except Exception as e:
+                    logger.error(f"Error envolviendo la conexión SSL de {addr}: {e}")
+                    conn.close()
+                    continue
+                # else:
+                #     ssl_conn = conn
+                #     logger.info(f"Conexión interna (sin SSL) aceptada de {addr}")
+                threading.Thread(target=self.serve_client, args=(ssl_conn,), daemon=True).start()
+
+
 
     def serve_client(self, conn: socket.socket):
         try:
@@ -1180,9 +1216,10 @@ class ChordNode:
                         conn.send("0".encode())
                         return
                     # 3) Enviar tamaño
-                    conn.send(str(len(file_content)).encode())
-                    # Esperar el ACK del cliente
-                    ack = conn.recv(1024).decode()
+                    conn.send((str(len(file_content)) + "\n").encode())
+                    # Ahora espera el ACK del cliente
+                    ack = conn.recv(1024).decode().strip()
+
                     # 4) Enviar el contenido
                     offset = 0
                     while offset < len(file_content):
@@ -1190,36 +1227,31 @@ class ChordNode:
                         conn.send(chunk)
                         offset += len(chunk)
                 else:
-                    # Reenviamos la petición a 'responsable'
                     logger.info(f"Redirigiendo descarga de '{file_hash}' al nodo responsable {responsable.ip}")
                     try:
-                        # 1) Conectar al responsable
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
-                            s2.connect((responsable.ip, responsable.port))
-                            # 2) Mandar la misma operación: DOWNLOAD_FILE,<file_name>
-                            s2.sendall(f"{DOWNLOAD_FILE},{file_hash}".encode('utf-8'))
-
-                            # 3) Leer el tamaño que responde el responsable
-                            size_str = s2.recv(1024).decode()
-                            # reenviamos el tamaño al cliente
-                            conn.send(size_str.encode())
-
-                            # 4) Recibir su ACK del cliente y reenviarlo
-                            ack2 = conn.recv(1024).decode()
-                            s2.sendall(ack2.encode())
-
-                            # 5) Recibir el contenido del responsable y reenviarlo al cliente
-                            remaining = int(size_str)
-                            while remaining > 0:
-                                chunk = s2.recv(min(1024000, remaining))
-                                if not chunk:
-                                    break
-                                conn.sendall(chunk)
-                                remaining -= len(chunk)
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_sock:
+                            raw_sock.connect((responsable.ip, responsable.port))
+                            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                            context.check_hostname = False
+                            context.verify_mode = ssl.CERT_NONE
+                            with context.wrap_socket(raw_sock, server_hostname=responsable.ip) as ssl_sock:
+                                ssl_sock.sendall(f"{DOWNLOAD_FILE},{file_hash}".encode('utf-8'))
+                                size_str = ssl_sock.recv(1024).decode()
+                                # reenviamos el tamaño al cliente
+                                conn.send(size_str.encode())
+                                ack2 = conn.recv(1024).decode()
+                                ssl_sock.sendall(ack2.encode())
+                                remaining = int(size_str)
+                                while remaining > 0:
+                                    chunk = ssl_sock.recv(min(1024000, remaining))
+                                    if not chunk:
+                                        break
+                                    conn.sendall(chunk)
+                                    remaining -= len(chunk)
                     except Exception as e:
                         logger.error(f"Error reenviando la descarga a {responsable.ip}: {e}")
-                        # Notificar que no se pudo, enviamos '0'
                         conn.send("0".encode())
+
 
             elif option == REMOVE_FILE:  # 15
                 file_name = data[1]

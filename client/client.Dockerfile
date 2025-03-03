@@ -47,26 +47,43 @@
 # ENTRYPOINT ["/bin/bash", "-c", "/app/client.sh && python /app/client.py"]
 
 
+# FROM python:3.9-slim
+
+# WORKDIR /app
+
+# COPY ./requirements.txt .
+
+# RUN pip install --no-cache-dir -r requirements.txt
+
+# RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
+
+
+
+# COPY . .
+
+# EXPOSE 8501
+
+# # Asegúrate de que el script sea ejecutable
+# RUN chmod +x /app/client.sh
+
+# # Ejecutar el script de configuración y luego el cliente
+# ENTRYPOINT ["/bin/bash", "-c", "/app/client.sh"]
+
+# CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
+
+
 FROM python:3.9-slim
 
+# Crear directorio de trabajo
 WORKDIR /app
-
-COPY ./requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
 
 RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
 
+# Copiar los archivos necesarios
+COPY client/client.py ./client.py
+COPY client/client.sh /usr/local/bin/client.sh
 
+RUN chmod +x /usr/local/bin/client.sh
 
-COPY . .
-
-EXPOSE 8501
-
-# Asegúrate de que el script sea ejecutable
-RUN chmod +x /app/client.sh
-
-# Ejecutar el script de configuración y luego el cliente
-ENTRYPOINT ["/bin/bash", "-c", "/app/client.sh"]
-
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+ENTRYPOINT ["/bin/bash", "-c", "/usr/local/bin/client.sh && python /app/client.py"]
