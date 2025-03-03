@@ -1,0 +1,95 @@
+services:
+  router_base:
+    build:
+      context: ./router
+      dockerfile: router_base.Dockerfile
+    image: router:base
+    command: "echo 'router base built'"
+    # Este servicio solo se usa para construir la imagen, no necesita red.
+    network_mode: none
+    restart: "no"
+
+  router:
+    build:
+      context: ./router
+      dockerfile: router.Dockerfile
+    container_name: router
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - router_base
+    # Se adjuntan tres redes; el orden (tal como se define en YAML) asigna:
+    # eth0: servers, eth1: clients, eth2: multicast.
+    networks:
+      servers:
+        ipv4_address: 10.0.11.254
+      clients:
+        ipv4_address: 10.0.10.254
+      multicast: {}
+    restart: always
+
+  mcproxy:
+    build:
+      context: ./router
+      dockerfile: router.Dockerfile
+    container_name: mcproxy
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - router_base
+    networks:
+      servers:
+        ipv4_address: 10.0.11.253
+      clients:
+        ipv4_address: 10.0.10.253
+      multicast: {}
+    restart: always
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: server_app
+    # Asignamos la IP 10.0.11.10 en la red de servidores, que es la que usará el servicio.
+    networks:
+      servers:
+        ipv4_address: 10.0.11.10
+    ports:
+      - "5001:5001"
+    restart: on-failure
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client_app
+    networks:
+      clients: {}
+      servers: {}
+    ports:
+      - "8501:8501"
+    restart: on-failure
+
+networks:
+  servers:
+    name: servers
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "10.0.11.0/24"
+  clients:
+    name: clients
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "10.0.10.0/24"
+  multicast:
+    name: multicast
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "172.16.0.0/24"
