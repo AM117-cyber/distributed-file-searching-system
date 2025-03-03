@@ -43,7 +43,36 @@ REPLIC = 14
 REMOVE_FILE = 15
 TRIGGER_REPLICATION = 16
 GET_STATUS = 99
+PREVIEW_FILE = 20
 
+
+def process_file(file_path):
+    """Process the file and generate a preview based on its type."""
+    mime_type, _ = mimetypes.guess_type(file_path)
+
+
+    try:
+        if mime_type and mime_type.startswith('text'):
+            preview = generate_text_preview(file_path, output_folder)
+        elif mime_type and (file_path.endswith('.py') or file_path.endswith('.cs')):
+            preview = generate_code_preview(file_path, output_folder)
+        elif mime_type == 'application/pdf':
+            preview = generate_pdf_preview(file_path, output_folder)
+        elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+            preview = generate_docx_preview(file_path, output_folder)
+        elif mime_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+            preview = generate_xlsx_preview(file_path, output_folder)
+        elif mime_type and mime_type.startswith('image'):
+            preview = generate_image_preview(file_path, output_folder)
+        elif mime_type and mime_type.startswith('audio'):
+            preview = generate_audio_preview(file_path, output_folder)
+        elif mime_type and mime_type.startswith('video'):
+            preview = generate_video_preview(file_path, output_folder)
+        else:
+            return
+        return preview
+    except Exception as e:
+        print(f"An error occurred while processing {file_path}: {e}")
 
 
 def compute_hash(file_content):
@@ -1167,6 +1196,59 @@ class ChordNode:
                     logger.error(f"Búsqueda por broadcast fallada: {e}")
                     conn.sendall("ERROR DURANTE LA BUSQUEDA POR BROADCAST".encode())
 
+            elif option == PREVIEW_FILE:
+                file_hash_g = data[1]
+                file_hash = int(file_hash_g, 10)
+                # 2) Buscar al responsable
+                responsable = self.find_succ(file_hash)
+                if responsable.id == self.id:
+                    # YO soy responsable (o tengo el archivo) => descargo local
+                    file_content = self.download_file(file_hash_g)
+                    if not file_content:
+                        # no encontrado => mando tamaño cero
+                        conn.send("0".encode())
+                        return
+                    # 3) Enviar tamaño
+                    conn.send(str(len(file_content)).encode())
+                    # Esperar el ACK del cliente
+                    ack = conn.recv(1024).decode()
+                    # 4) Enviar el contenido
+                    offset = 0
+                    while offset < len(file_content):
+                        chunk = file_content[offset: offset+1024000]
+                        conn.send(chunk)
+                        offset += len(chunk)
+                else:
+                    # Reenviamos la petición a 'responsable'
+                    logger.info(f"Redirigiendo descarga de '{file_hash}' al nodo responsable {responsable.ip}")
+                    try:
+                        # 1) Conectar al responsable
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
+                            s2.connect((responsable.ip, responsable.port))
+                            # 2) Mandar la misma operación: DOWNLOAD_FILE,<file_name>
+                            s2.sendall(f"{DOWNLOAD_FILE},{file_hash}".encode('utf-8'))
+
+                            # 3) Leer el tamaño que responde el responsable
+                            size_str = s2.recv(1024).decode()
+                            # reenviamos el tamaño al cliente
+                            conn.send(size_str.encode())
+
+                            # 4) Recibir su ACK del cliente y reenviarlo
+                            ack2 = conn.recv(1024).decode()
+                            s2.sendall(ack2.encode())
+
+                            # 5) Recibir el contenido del responsable y reenviarlo al cliente
+                            remaining = int(size_str)
+                            while remaining > 0:
+                                chunk = s2.recv(min(1024000, remaining))
+                                if not chunk:
+                                    break
+                                conn.sendall(chunk)
+                                remaining -= len(chunk)
+                    except Exception as e:
+                        logger.error(f"Error reenviando la descarga a {responsable.ip}: {e}")
+                        # Notificar que no se pudo, enviamos '0'
+                        conn.send("0".encode())
             elif option == DOWNLOAD_FILE:
                 file_hash_g = data[1]
                 file_hash = int(file_hash_g, 10)
