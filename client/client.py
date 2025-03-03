@@ -220,6 +220,11 @@ def download_file(command):
 
         # 2) Reconectarnos (o reusar) con node_ip (o con results[index]['ip'],
         #    pero se asume el server reenvía si no es el responsable)
+        node_ip = discover_node()
+        if node_ip is None:
+            print("[AVISO] No se pudo descubrir ningún nodo activo. No se realizará la operación.")
+            return
+
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_socket.connect((node_ip, TCP_PORT))

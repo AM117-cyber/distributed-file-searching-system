@@ -223,6 +223,8 @@ class ChordNode:
         self.successor2 = self.ref
         self.ring_stable = True
         self.replication_ok = True
+        self.known_nodes = set()
+        self.known_nodes.add(self.ip)
 
 
 
@@ -596,7 +598,13 @@ class ChordNode:
         # logger.info("Recuperando sucesor del sucesor 2")
         self.successor2 = self.successor1.succ
 
+        if self.successor1.ip not in self.known_nodes:
+            self.known_nodes.add(self.successor1.ip)
+        if self.successor2.ip not in self.known_nodes:
+            self.known_nodes.add(self.successor2.ip)
+
         self.maintenance_once()
+
         # logger.info(f"Sucesor 3 establecido: {self.successor2.ip} (ID: {self.successor2.id})")
 
         # logger.info("Unión al anillo completada")
@@ -625,24 +633,50 @@ class ChordNode:
 
     def heartbeat(self):
         """
-        Hilo ligero que cada X segundos verifica
-        si el sucesor sigue vivo.
-        Si no, llama handle_node_failure.
+        Cada 10s verifica si succ, successor1, successor2 están vivos.
+        Si alguno no responde, se hace fallback y/o se invoca maintenance_once().
         """
-        CHECK_INTERVAL = 10  # cada 10s, por ejemplo
+        CHECK_INTERVAL = 10
         while True:
             time.sleep(CHECK_INTERVAL)
-
-            # 1) Revisar si `self.succ` está vivo
             try:
-                resp = self.succ.alive()  # Operation code IS_ALIVE
-                if not resp or "alive" not in resp:
-                    # Se considera nodo caído
-                    logger.warning(f"Heartbeat: sucesor {self.succ.ip} no responde.")
-                    self.maintenance_once()
+                if self.succ and self.succ.id != self.id:
+                    resp_succ = self.succ.alive()
+                    if not resp_succ or 'alive' not in resp_succ:
+                        logger.warning(f"[HEARTBEAT] succ {self.succ.ip} no responde => fallback a successor1.")
+                        self.succ = self.successor1
+                        self.maintenance_once()
             except Exception as e:
-                logger.warning(f"Heartbeat: error contactando a {self.succ.ip}: {e}")
+                logger.warning(f"[HEARTBEAT] Error contactando a succ {self.succ.ip}: {e}")
+                self.succ = self.successor1
                 self.maintenance_once()
+
+            # # Revisar successor1
+            # try:
+            #     if self.successor1 and self.successor1.id != self.id:
+            #         resp_succ1 = self.successor1.alive()
+            #         if not resp_succ1 or 'alive' not in resp_succ1:
+            #             logger.warning(f"[HEARTBEAT] successor1 {self.successor1.ip} no responde => fallback a successor2.")
+            #             self.successor1 = self.successor2
+            #             self.maintenance_once()
+            # except Exception as e1:
+            #     logger.warning(f"[HEARTBEAT] Error contactando a successor1 {self.successor1.ip}: {e1}")
+            #     self.successor1 = self.successor2
+            #     self.maintenance_once()
+
+            # # Revisar successor2
+            # try:
+            #     if self.successor2 and self.successor2.id != self.id:
+            #         resp_succ2 = self.successor2.alive()
+            #         if not resp_succ2 or 'alive' not in resp_succ2:
+            #             logger.warning(f"[HEARTBEAT] successor2 {self.successor2.ip} no responde => no fallback (3er sucesor).")
+            #             # Si quisieras un fallback mayor, p.ej. successor3, lo harías aquí
+            #             self.maintenance_once()
+            # except Exception as e2:
+            #     logger.warning(f"[HEARTBEAT] Error contactando a successor2 {self.successor2.ip}: {e2}")
+            #     # No hay más fallback, pero al menos:
+                # self.maintenance_once()
+
 
 
     # def maintenance(self):
@@ -782,6 +816,9 @@ class ChordNode:
 
             logger.info(f"Stabilize: succ={self.succ}, successor1={self.successor1}, successor2={self.successor2}, pred={self.pred}")
             time.sleep(5)
+            self.replicate()
+            time.sleep(15)
+
 
     def replicate(self):
         """
@@ -823,47 +860,52 @@ class ChordNode:
                     logger.info(f"[REPLICACIÓN] Soy responsable de '{fname}'. Replicando a successor1 y successor2...")
                     # Replico a successor1
                     try:
-                        if self.successor1 and self.successor1.id != self.id:
-                            alive2 = self.successor1.alive()
+                        if self.succ and self.succ.id != self.id:
+                            alive2 = self.succ.alive()
                             if alive2 and 'alive' in alive2:
-                                resp2 = self.successor1.replic(fname, ftype, content, file_size)
+                                resp2 = self.succ.replic(fname, ftype, content, file_size)
                                 logger.debug(f"[REPLICACIÓN] Resp replic en successor1: {resp2.decode()}")
                             else:
-                                logger.warning(f"[REPLICACIÓN] successor1 {self.successor1.ip} no responde. Omisión de replic.")
+                                logger.warning(f"[REPLICACIÓN] succ {self.succ.ip} no responde. Omisión de replic.")
                     except Exception as e2:
-                        logger.warning(f"[REPLICACIÓN] Error replicando a successor1 {self.successor1.ip}: {e2}")
+                        logger.warning(f"[REPLICACIÓN] Error replicando a succ {self.succ.ip}: {e2}")
 
                     # Replico a successor2
                     try:
-                        if self.successor2 and self.successor2.id != self.id:
-                            alive3 = self.successor2.alive()
+                        if self.successor1 and self.successor1.id != self.id:
+                            alive3 = self.successor1.alive()
                             if alive3 and 'alive' in alive3:
-                                resp3 = self.successor2.replic(fname, ftype, content, file_size)
-                                logger.debug(f"[REPLICACIÓN] Resp replic en successor2: {resp3.decode()}")
+                                resp3 = self.successor1.replic(fname, ftype, content, file_size)
+                                logger.debug(f"[REPLICACIÓN] Resp replic en successor1: {resp3.decode()}")
                             else:
-                                logger.warning(f"[REPLICACIÓN] successor2 {self.successor2.ip} no responde. Omisión de replic.")
+                                logger.warning(f"[REPLICACIÓN] successor1 {self.successor1.ip} no responde. Omisión de replic.")
                     except Exception as e3:
-                        logger.warning(f"[REPLICACIÓN] Error replicando a successor2 {self.successor2.ip}: {e3}")
+                        logger.warning(f"[REPLICACIÓN] Error replicando a successor1 {self.successor1.ip}: {e3}")
 
                 else:
                     # No soy responsable → lo subo al responsable
                     logger.info(f"[REPLICACIÓN] '{fname}' no pertenece a mí. Lo envío a {responsable.ip} y luego lo elimino si confirma.")
                     upload_resp = responsable.save_file(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
 
+                    remove_resp = self.remove_local_file(fname)
+                    logger.debug(f"[REPLICACIÓN] remove_local_file: {remove_resp}")
+
+                    responsable.succ.replic(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
+                    responsable.succ.succ.replic(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
+
                     # Determina si realmente se guardó
                     # Ej. "Archivo subido correctamente" o "Nombre agregado al archivo existente"
                     # si confirmamos que la hash coincide.
-                    if "subido correctamente" in upload_resp.lower() or "agregado al archivo existente" in upload_resp.lower():
+                    # if "subido correctamente" in upload_resp.lower() or "agregado al archivo existente" in upload_resp.lower():
                         # Eliminamos local
-                        remove_resp = self.remove_local_file(fname)
-                        logger.debug(f"[REPLICACIÓN] remove_local_file: {remove_resp}")
+
                     # elif "ya existe con ese nombre" in upload_resp.lower():
                     #     # Ideal: checar si es la misma hash.
                     #     # Suponiendo que es la misma, entonces lo borro local:
                     #     remove_resp = self.remove_local_file(fname)
                     #     logger.debug(f"[REPLICACIÓN] remove_local_file: {remove_resp}")
-                    else:
-                        logger.warning(f"[REPLICACIÓN] El responsable devolvió respuesta inesperada: '{upload_resp}'. No elimino mi copia local.")
+                    # else:
+                        # logger.warning(f"[REPLICACIÓN] El responsable devolvió respuesta inesperada: '{upload_resp}'. No elimino mi copia local.")
 
             self.replication_ok = True
             logger.info("[REPLICACIÓN] Replicación exitosa. replication_ok se marca True.")
@@ -952,7 +994,14 @@ class ChordNode:
                     response = f"SEARCH_RESULT~{local_results}"
                     sock.sendto(response.encode(), addr)
                     logger.debug(f"Enviados resultados de búsqueda a {addr}")
+            elif message == "HEARTBEAT_PING":
+                # Responder unicast al remitente con "HEARTBEAT_PONG,<mi_ip>"
+                response = f"HEARTBEAT_PONG,{self.ip}"
+                sock.sendto(response.encode('utf-8'), addr)
 
+            elif message == "MAINTENANCE_CALL":
+                logger.info("[BROADCAST] Recibida MAINTENANCE_CALL. Ejecutando maintenance_once().")
+                self.maintenance_once()
         except Exception as e:
             logger.error(f"Error al manejar mensaje de broadcast: {e}")
 
@@ -992,6 +1041,9 @@ class ChordNode:
                         if server_ip == self.ip:
                             continue
                         # logger.info(f"Servidor encontrado en la IP: {server_ip}")
+                        if server_ip and server_ip not in self.known_nodes:
+                            self.known_nodes.add(server_ip)
+
                         return server_ip # Devuelve la IP del primer servidor encontrado
 
                 except socket.timeout:
