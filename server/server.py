@@ -34,6 +34,7 @@ GET_PREDECESSOR = 4
 NOTIFY = 5
 CLOSEST_PRECEDING_FINGER = 6
 IS_ALIVE = 7
+NOTIFY1 = 8
 UPLOAD_FILE = 10
 SEARCH_FILE = 11
 DOWNLOAD_FILE = 12
@@ -41,6 +42,7 @@ SAVE_REPLIC = 13
 REPLIC = 14
 REMOVE_FILE = 15
 TRIGGER_REPLICATION = 16
+GET_STATUS = 99
 
 
 
@@ -100,6 +102,11 @@ class ChordNodeReference:
     def notify(self, node: 'ChordNodeReference'):
         logger.debug(f"Notificando a {self.ip} sobre posible predecesor {node.ip}")
         self._send_data(NOTIFY, f'{node.id},{node.ip}')
+
+    def notify1(self, node: 'ChordNodeReference'):
+        self._send_data(NOTIFY1, f'{node.id},{node.ip}')
+
+
 
     def closest_preceding_finger(self, id: int) -> 'ChordNodeReference':
         logger.debug(f"Buscando dedo más cercano a ID {id} a través de nodo {self.ip}")
@@ -214,6 +221,10 @@ class ChordNode:
         self.lock = threading.Lock()
         self.successor1 = self.ref
         self.successor2 = self.ref
+        self.ring_stable = True
+        self.replication_ok = True
+
+
 
         logger.info(f"Inicializando nodo Chord: ID={self.id}, IP={self.ip}, Puerto={self.port}")
 
@@ -232,14 +243,13 @@ class ChordNode:
         # logger.info(f"Base de datos inicializada: {DB_FILE}")
 
         # Iniciar hilos
-        # threading.Thread(target=self.stabilize, daemon=True).start()
-        # logger.info("Hilo de estabilización iniciado")
-
-        # threading.Thread(target=self.fix_fingers, daemon=True).start()
-        # logger.info("Hilo de corrección de finger table iniciado")
-
-        threading.Thread(target=self.maintenance, daemon=True).start()
+        threading.Thread(target=self.stabilize, daemon=True).start()
         logger.info("Hilo de estabilización iniciado")
+
+        threading.Thread(target=self.fix_fingers, daemon=True).start()
+        logger.info("Hilo de corrección de finger table iniciado")
+
+        threading.Thread(target=self.heartbeat, daemon=True).start()
 
         # Socket para broadcast
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -299,14 +309,14 @@ class ChordNode:
 
     def _init_db(self):
         logger.debug("Inicializando esquema de base de datos")
-        
+
         self.cursor.execute('''
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hash TEXT UNIQUE NOT NULL,
             content BLOB NOT NULL,
             type TEXT NOT NULL
-            
+
         )
         ''')
 
@@ -327,15 +337,16 @@ class ChordNode:
             try:
                 cursor = self.conn.cursor()  # en vez de self.cursor
                 # logger.info(f"Guardando archivo: '{file_name}' ({file_type}, {len(file_content)} bytes)")
-                file_hash = compute_hash(file_content)
-                logger.debug(f"Hash del archivo: {file_hash[:10]}...")
+                file_hash = getShaRepr(str(file_content))
+                file_hash_str = str(file_hash)
+                # logger.debug(f"Hash del archivo: {file_hash[:10]}...")
 
-                cursor.execute('SELECT id FROM files WHERE hash = ?', (file_hash,))
+                cursor.execute('SELECT id FROM files WHERE hash = ?', (file_hash_str,))
                 file_record = cursor.fetchone()
 
                 if file_record:
                     file_id = file_record[0]
-                    logger.debug(f"Archivo con hash {file_hash[:10]}... ya existe (ID: {file_id})")
+                    # logger.debug(f"Archivo con hash {file_hash[:10]}... ya existe (ID: {file_id})")
 
                     cursor.execute('SELECT name FROM file_names WHERE file_id = ? AND name = ?', (file_id, file_name))
                     name_record = cursor.fetchone()
@@ -351,7 +362,7 @@ class ChordNode:
                 else:
                     # logger.info(f"Guardando nuevo archivo '{file_name}' ({file_type}, {len(file_content)} bytes)")
                     cursor.execute('INSERT INTO files (hash, content, type) VALUES (?, ?, ?)',
-                                      (file_hash, file_content, file_type))
+                                      (file_hash_str, file_content, file_type))
                     file_id = cursor.lastrowid
                     cursor.execute('INSERT INTO file_names (file_id, name) VALUES (?, ?)', (file_id, file_name))
                     self.conn.commit()
@@ -360,7 +371,7 @@ class ChordNode:
             except Exception as e:
                 logger.error(f"Error al guardar archivo '{file_name}': {e}", exc_info=True)
                 return f"Error al guardar archivo: {e}"
-            
+
     def broadcast_search(self, file_name, file_type):
         results = []
         broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -393,53 +404,64 @@ class ChordNode:
         return results
 
 
-    def search_file(self, file_name, file_type):
+    def search_file(self, file_name: str = None, file_type: str = None) -> list:
         """
-        Busca localmente en la base de datos
-        archivos que coincidan con file_name y file_type.
+        Busca en la base local.
+        - file_name: si no es None (o si es '*'), se ignora el filtro de nombre
+        - file_type: si no es None (o si es '*'), se ignora el filtro de tipo
         """
         try:
-            # Búsqueda en la DB local
-            query = '''SELECT fn.name, f.type, f.hash
-                    FROM files f
-                    JOIN file_names fn ON f.id = fn.file_id
-                    WHERE fn.name LIKE ?'''
-            params = (f"%{file_name}%",)
+            base_query = """SELECT fn.name, f.type, f.hash
+                            FROM files f
+                            JOIN file_names fn ON f.id = fn.file_id
+                            WHERE 1=1"""
+            params = []
 
-            if file_type != "*":
-                query += ' AND f.type = ?'
-                params += (file_type,)
+            # Filtro por nombre (si file_name no es '*' y no es vacío)
+            if file_name and file_name != "*":
+                base_query += " AND fn.name LIKE ?"
+                params.append(f"%{file_name}%")
 
-            self.cursor.execute(query, params)
+            # Filtro por tipo (si file_type no es '*' y no es vacío)
+            if file_type and file_type != "*":
+                base_query += " AND f.type = ?"
+                params.append(file_type)
+
+            # Ahora ejecutamos:
+            self.cursor.execute(base_query, params)
+            rows = self.cursor.fetchall()
+
             results = []
-            for row in self.cursor.fetchall():
+            for row in rows:
                 results.append({
                     "name": row[0],
                     "type": row[1],
                     "hash": row[2],
                     "ip": self.ip
                 })
+
             return results
         except Exception as e:
             logger.error(f"Error en búsqueda local: {e}", exc_info=True)
             return []
 
-    def download_file(self, file_name):
+
+    def download_file(self, file_hash_str):
         """Recupera un archivo de la base de datos local."""
         try:
-            # logger.info(f"Solicitando descarga de archivo: '{file_name}'")
-            self.cursor.execute('''SELECT f.content, fn.name FROM files f
-            JOIN file_names fn ON f.id = fn.file_id WHERE fn.name = ?''', (file_name,))
+            self.cursor.execute('''
+                SELECT content
+                FROM files
+                WHERE hash = ?
+            ''', (file_hash_str,))
             result = self.cursor.fetchone()
-
             if result:
-                # logger.info(f"Archivo '{file_name}' encontrado. Tamaño: {len(result[0])} bytes")
-                return result[0]
+                return result[0]  # El contenido binario
             else:
-                logger.warning(f"Archivo '{file_name}' no encontrado en este nodo")
+                logger.warning(f"Archivo con hash '{file_hash_str}' no encontrado en este nodo")
                 return None
         except Exception as e:
-            logger.error(f"Error al recuperar archivo '{file_name}': {e}", exc_info=True)
+            logger.error(f"Error al recuperar archivo con hash '{file_hash_str}': {e}", exc_info=True)
             return None
 
     def remove_local_file(self, file_name: str):
@@ -573,94 +595,193 @@ class ChordNode:
 
         # logger.info("Recuperando sucesor del sucesor 2")
         self.successor2 = self.successor1.succ
+
+        self.maintenance_once()
         # logger.info(f"Sucesor 3 establecido: {self.successor2.ip} (ID: {self.successor2.id})")
 
         # logger.info("Unión al anillo completada")
 
-    def maintenance(self):
-        """
-        Un solo bucle que hace:
-        1) estabilización,
-        2) corrección de fingers
-        3) replicación
-        cada N segundos.
-        """
-        time.sleep(5)
-        logger.info("[MAINTENANCE] Iniciando mantenimiento unificado (stabilize + fix_fingers + replicate)")
+    def check_stability(self) -> bool:
 
-        while True:
-            # 1) un ciclo de estabilización
-            self.stabilize()
+        # Si soy el único nodo (self.succ es yo), no estable:
+        if self.successor1.id == self.id:
+            return False
 
-            # 2) un ciclo de fix_fingers
+        # Requerimos que successor1 también sea distinto:
+        if self.successor2.id == self.id:
+            return False
+
+        return True
+
+    def maintenance_once(self):
+        logger.info("[MAINTENANCE] Iniciando mantenimiento on-demand...")
+        try:
+            self.stabilize_once()
             self._fix_fingers_once()
-
-            # 3) un ciclo de replicación
             self.replicate()
+        except Exception as e:
+            logger.error(f"[MAINTENANCE] Error: {e}", exc_info=True)
+        logger.info("[MAINTENANCE] Mantenimiento on-demand finalizado.")
 
-            # 4) Espera
-            time.sleep(30)
+    def heartbeat(self):
+        """
+        Hilo ligero que cada X segundos verifica
+        si el sucesor sigue vivo.
+        Si no, llama handle_node_failure.
+        """
+        CHECK_INTERVAL = 10  # cada 10s, por ejemplo
+        while True:
+            time.sleep(CHECK_INTERVAL)
+
+            # 1) Revisar si `self.succ` está vivo
+            try:
+                resp = self.succ.alive()  # Operation code IS_ALIVE
+                if not resp or "alive" not in resp:
+                    # Se considera nodo caído
+                    logger.warning(f"Heartbeat: sucesor {self.succ.ip} no responde.")
+                    self.maintenance_once()
+            except Exception as e:
+                logger.warning(f"Heartbeat: error contactando a {self.succ.ip}: {e}")
+                self.maintenance_once()
+
+
+    # def maintenance(self):
+    #     """
+    #     Un solo bucle que hace:
+    #     1) estabilización,
+    #     2) corrección de fingers
+    #     3) replicación
+    #     cada N segundos.
+    #     """
+    #     time.sleep(5)
+    #     logger.info("[MAINTENANCE] Iniciando mantenimiento unificado (stabilize + fix_fingers + replicate)")
+
+    #     while True:
+    #         # 1) un ciclo de estabilización
+    #         self.stabilize()
+
+    #         # 2) un ciclo de fix_fingers
+    #         self._fix_fingers_once()
+
+    #         # 3) un ciclo de replicación
+    #         self.replicate()
+
+    #         # 4) Espera
+    #         time.sleep(30)
+
+
+    def stabilize_once(self):
+        """
+        Ciclo periódico de estabilización:
+         - Verifica predecesor del sucesor
+         - Ajusta succ si se detecta algo más adecuado
+         - Ajusta successor1, successor2
+         - Notifica al sucesor
+         - Maneja fallos con successor1, successor2
+        """
+        time.sleep(5)  # Espera inicial
+
+        try:
+            if self.succ:
+                x = self.succ.pred
+
+                if x.id != self.id:
+                    # Ver si x está "entre" mi id y succ.id
+                    if self.succ.id == self.id or self._inrange(x.id, self.id, self.succ.id):
+                        self.succ = x
+                # Ajustar successor1
+                self.successor1 = self.succ.succ
+                # Notificar
+                self.succ.notify(self.ref)
+
+        except Exception as e:
+            # Manejo de fallos
+            logger.warning(f"Fallo en stabilize normal: {e}. Intentando recuperacion con successor1 o successor2")
+            try:
+                x = self.successor1
+                self.succ = x
+                self.successor1 = self.succ.succ
+                # notify1 => fuerza al sucesor a ponernos de pred
+                self.succ.notify1(ChordNodeReference(self.ip, self.port))
+            except:
+                try:
+                    x = self.successor2
+                    self.succ = x
+                    self.successor1 = self.succ.succ
+                    self.successor2.notify1(self.ref)
+                except Exception as h:
+                    logger.error(f"Fallo completo en stabilize: {h}")
+
+        # Ajustar successor2
+        try:
+            self.successor2 = self.succ.succ.succ
+        except:
+            # fallback
+            try:
+                self.successor2 = self.successor2.succ
+            except:
+                time.sleep(1)
+
+
+        logger.info(f"Stabilize: succ={self.succ}, successor1={self.successor1}, successor2={self.successor2}, pred={self.pred}")
+        time.sleep(5)
 
 
     def stabilize(self):
         """
-        Ciclo periódico de estabilización.
-        - Verifica si el sucesor está vivo; si no, recurre a successor1 o successor2.
-        - Pregunta quién es el pred del sucesor y ajusta si corresponde.
-        - Actualiza successor1, successor2.
+        Ciclo periódico de estabilización:
+         - Verifica predecesor del sucesor
+         - Ajusta succ si se detecta algo más adecuado
+         - Ajusta successor1, successor2
+         - Notifica al sucesor
+         - Maneja fallos con successor1, successor2
         """
-    # time.sleep(5)  # Espera inicial
-    # while True:
-        try:
-            # 1) Verifica si self.succ sigue vivo
+        time.sleep(5)  # Espera inicial
+        while True:
             try:
-                resp = self.succ.alive()  # Operation code IS_ALIVE
-                if not resp or 'alive' not in resp:
-                    raise Exception(f"Sucesor {self.succ.ip} no respondió 'alive'")
+                if self.succ:
+                    x = self.succ.pred
+
+                    if x.id != self.id:
+                        # Ver si x está "entre" mi id y succ.id
+                        if self.succ.id == self.id or self._inrange(x.id, self.id, self.succ.id):
+                            self.succ = x
+                    # Ajustar successor1
+                    self.successor1 = self.succ.succ
+                    # Notificar
+                    self.succ.notify(self.ref)
+
             except Exception as e:
-                logger.warning(f"Sucesor {self.succ.ip} caído: {e}. Intentando con successor1/ successor2")
-                # Salta a successor1
-                self.succ = self.successor1
+                # Manejo de fallos
+                logger.warning(f"Fallo en stabilize normal: {e}. Intentando recuperacion con successor1 o successor2")
                 try:
-                    resp2 = self.succ.alive()
-                    if not resp2 or 'alive' not in resp2:
-                        logger.warning(f"successor1 {self.succ.ip} tampoco responde. Intentando successor2.")
-                        self.succ = self.successor2
-                except Exception as e2:
-                    logger.warning(f"successor1 {self.succ.ip} falló: {e2}. Intentando successor2.")
-                    self.succ = self.successor2
-
-            # 2) Pregunta al sucesor por su pred
-            try:
-                x = self.succ.pred  # Podría lanzar excepción si el sucesor también está caído
-                # Si x encaja en el rango (self.id, self.succ.id), actualizamos sucesor
-                if x.id != self.id and self._inrange(x.id, self.id, self.succ.id):
+                    x = self.successor1
                     self.succ = x
-            except Exception as e:
-                logger.debug(f"No se pudo obtener pred del sucesor: {e}")
+                    self.successor1 = self.succ.succ
+                    # notify1 => fuerza al sucesor a ponernos de pred
+                    self.succ.notify1(ChordNodeReference(self.ip, self.port))
+                except:
+                    try:
+                        x = self.successor2
+                        self.succ = x
+                        self.successor1 = self.succ.succ
+                        self.successor2.notify1(self.ref)
+                    except Exception as h:
+                        logger.error(f"Fallo completo en stabilize: {h}")
 
-            # 3) Notificar al sucesor de mi existencia
+            # Ajustar successor2
             try:
-                self.succ.notify(self.ref)
-            except Exception as e:
-                logger.debug(f"No se pudo notificar al sucesor {self.succ.ip}: {e}")
+                self.successor2 = self.succ.succ.succ
+            except:
+                # fallback
+                try:
+                    self.successor2 = self.successor2.succ
+                except:
+                    time.sleep(1)
+                    continue
 
-            # 4) Actualizar successor1
-            try:
-                self.successor1 = self.succ.succ
-            except Exception:
-                self.successor1 = self.ref  # fallback a mí mismo si falla
-
-            # 5) Actualizar successor2
-            try:
-                self.successor2 = self.successor1.succ
-            except Exception:
-                self.successor2 = self.ref
-
-        except Exception as e:
-            logger.error(f"Error en estabilización: {e}", exc_info=True)
-
-        # time.sleep(5)
+            logger.info(f"Stabilize: succ={self.succ}, successor1={self.successor1}, successor2={self.successor2}, pred={self.pred}")
+            time.sleep(5)
 
     def replicate(self):
         """
@@ -669,7 +790,9 @@ class ChordNode:
         - Solo elimino mi copia si el remoto confirma que guardó (o “ya existe mismo hash”).
         """
     # while True:
-        time.sleep(30)
+        if not self.ring_stable:
+            logger.info("[REPLICACIÓN] El anillo no está estable, se omite replicación por ahora.")
+            return  # o un time.sleep(…)
         try:
             logger.info("[REPLICACIÓN] Iniciando verificación/replicación de archivos...")
             self.cursor.execute("""
@@ -742,9 +865,10 @@ class ChordNode:
                     else:
                         logger.warning(f"[REPLICACIÓN] El responsable devolvió respuesta inesperada: '{upload_resp}'. No elimino mi copia local.")
 
-            logger.info("[REPLICACIÓN] Ciclo de replicación completado. Próxima ejecución en 30 segundos.")
+            self.replication_ok = True
+            logger.info("[REPLICACIÓN] Replicación exitosa. replication_ok se marca True.")
         except Exception as e:
-            logger.error(f"[REPLICACIÓN] ERROR: Excepción en el proceso de replicación: {e}", exc_info=True)
+            logger.error(f"[REPLICACIÓN] ERROR: {e}", exc_info=True)
 
         # time.sleep(5)
 
@@ -762,18 +886,22 @@ class ChordNode:
             # logger.info(f"Actualizando predecesor: {self.pred.ip} -> {node.ip}")
             self.pred = node
 
-    # def fix_fingers(self):
-    #     """Proceso periódico de corrección de la finger table."""
-    #     time.sleep(5)
-    #     # logger.info("Iniciando proceso de corrección de finger table")
+    def notify1(self, node: 'ChordNodeReference'):
+        self.pred = node
+        print(f"new notify por node {node} pred {self.pred}")
 
-    #     while True:
-    #         for i in range(self.m - 1, -1, -1):
-    #             self.next = i
-    #             with self.lock:
-    #                 logger.debug(f"Corrigiendo entrada {self.next} de la finger table")
-    #                 self.finger[self.next] = self.find_succ((self.id + 2 ** self.next) % (2 ** self.m))
-    #         time.sleep(10)
+    def fix_fingers(self):
+        """Proceso periódico de corrección de la finger table."""
+        time.sleep(5)
+        # logger.info("Iniciando proceso de corrección de finger table")
+
+        while True:
+            for i in range(self.m - 1, -1, -1):
+                self.next = i
+                with self.lock:
+                    logger.debug(f"Corrigiendo entrada {self.next} de la finger table")
+                    self.finger[self.next] = self.find_succ((self.id + 2 ** self.next) % (2 ** self.m))
+            time.sleep(10)
 
     def _fix_fingers_once(self):
         """
@@ -813,6 +941,18 @@ class ChordNode:
                 response = f"SERVER_IP:{SERVER_IP}"
                 sock.sendto(response.encode('utf-8'), addr)
                 logger.debug(f"Respondido a solicitud de descubrimiento de {addr}")
+            elif message.startswith(f"{SEARCH_FILE},"):
+                parts = message.split(',')
+                file_name, file_type = parts[1], parts[2]
+                local_results = self.search_file(
+                    file_name if file_name else None,
+                    file_type if file_type else None
+                )
+                if local_results:
+                    response = f"SEARCH_RESULT~{local_results}"
+                    sock.sendto(response.encode(), addr)
+                    logger.debug(f"Enviados resultados de búsqueda a {addr}")
+
         except Exception as e:
             logger.error(f"Error al manejar mensaje de broadcast: {e}")
 
@@ -900,6 +1040,11 @@ class ChordNode:
                 id = int(data[1])
                 ip = data[2]
                 self.notify(ChordNodeReference(ip, self.port))
+            elif option == NOTIFY1:
+                id = int(data[1])
+                ip = data[2]
+                self.notify1(ChordNodeReference(ip, self.port))
+
             elif option == CLOSEST_PRECEDING_FINGER:
                 id = int(data[1])
                 data_resp = self.closest_preceding_finger(id)
@@ -935,6 +1080,7 @@ class ChordNode:
                             response = responsible_node.save_file(file_name, file_type, file_content, file_size).decode()
                 logger.debug("Enviando respuesta")
                 conn.send(response.encode())
+                self.maintenance_once()
 
             elif option == REPLIC:
                 file_name, file_type, file_size = data[1], data[2], int(data[3])
@@ -970,15 +1116,59 @@ class ChordNode:
                     conn.sendall("ERROR DURANTE LA BUSQUEDA POR BROADCAST".encode())
 
             elif option == DOWNLOAD_FILE:
-                file_hash = data[1]
-                logger.debug("Buscando sucesor responsable del archivo a descargar")
-                responsible_node = self.find_succ(file_hash)
-                response = responsible_node.download_file(file_hash)
-                conn.send(f'{len(response)}'.encode())
-                conn.recv(1024).decode()
-                for i in range(0, len(response), 1024000):
-                    chunk = response[i:i+1024000]
-                    conn.send(chunk)
+                file_hash_g = data[1]
+                file_hash = int(file_hash_g, 10)
+                # 2) Buscar al responsable
+                responsable = self.find_succ(file_hash)
+                if responsable.id == self.id:
+                    # YO soy responsable (o tengo el archivo) => descargo local
+                    file_content = self.download_file(file_hash_g)
+                    if not file_content:
+                        # no encontrado => mando tamaño cero
+                        conn.send("0".encode())
+                        return
+                    # 3) Enviar tamaño
+                    conn.send(str(len(file_content)).encode())
+                    # Esperar el ACK del cliente
+                    ack = conn.recv(1024).decode()
+                    # 4) Enviar el contenido
+                    offset = 0
+                    while offset < len(file_content):
+                        chunk = file_content[offset: offset+1024000]
+                        conn.send(chunk)
+                        offset += len(chunk)
+                else:
+                    # Reenviamos la petición a 'responsable'
+                    logger.info(f"Redirigiendo descarga de '{file_hash}' al nodo responsable {responsable.ip}")
+                    try:
+                        # 1) Conectar al responsable
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
+                            s2.connect((responsable.ip, responsable.port))
+                            # 2) Mandar la misma operación: DOWNLOAD_FILE,<file_name>
+                            s2.sendall(f"{DOWNLOAD_FILE},{file_hash}".encode('utf-8'))
+
+                            # 3) Leer el tamaño que responde el responsable
+                            size_str = s2.recv(1024).decode()
+                            # reenviamos el tamaño al cliente
+                            conn.send(size_str.encode())
+
+                            # 4) Recibir su ACK del cliente y reenviarlo
+                            ack2 = conn.recv(1024).decode()
+                            s2.sendall(ack2.encode())
+
+                            # 5) Recibir el contenido del responsable y reenviarlo al cliente
+                            remaining = int(size_str)
+                            while remaining > 0:
+                                chunk = s2.recv(min(1024000, remaining))
+                                if not chunk:
+                                    break
+                                conn.sendall(chunk)
+                                remaining -= len(chunk)
+                    except Exception as e:
+                        logger.error(f"Error reenviando la descarga a {responsable.ip}: {e}")
+                        # Notificar que no se pudo, enviamos '0'
+                        conn.send("0".encode())
+
             elif option == REMOVE_FILE:  # 15
                 file_name = data[1]
                 result = self.remove_local_file(file_name)
@@ -988,6 +1178,15 @@ class ChordNode:
                 logger.info(f"Recibida solicitud TRIGGER_REPLICATION de un nodo remoto.")
                 self.replicate()
                 conn.send("Replication done".encode())
+
+            if option == GET_STATUS:
+                # Retornar un dict con ring_stable y replication_ok
+                status = {
+                    'ring_stable': self.ring_stable,
+                    'replication_ok': self.replication_ok
+                }
+                conn.sendall(json.dumps(status).encode('utf-8'))
+
 
 
             if option in [UPLOAD_FILE,SEARCH_FILE]:
