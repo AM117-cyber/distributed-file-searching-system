@@ -47,33 +47,33 @@ GET_STATUS = 99
 PREVIEW_FILE = 20
 
 
-def process_file(file_path):
-    """Process the file and generate a preview based on its type."""
-    mime_type, _ = mimetypes.guess_type(file_path)
+# def process_file(file_path):
+#     """Process the file and generate a preview based on its type."""
+#     mime_type, _ = mimetypes.guess_type(file_path)
 
 
-    try:
-        if mime_type and mime_type.startswith('text'):
-            preview = generate_text_preview(file_path, output_folder)
-        elif mime_type and (file_path.endswith('.py') or file_path.endswith('.cs')):
-            preview = generate_code_preview(file_path, output_folder)
-        elif mime_type == 'application/pdf':
-            preview = generate_pdf_preview(file_path, output_folder)
-        elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-            preview = generate_docx_preview(file_path, output_folder)
-        elif mime_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-            preview = generate_xlsx_preview(file_path, output_folder)
-        elif mime_type and mime_type.startswith('image'):
-            preview = generate_image_preview(file_path, output_folder)
-        elif mime_type and mime_type.startswith('audio'):
-            preview = generate_audio_preview(file_path, output_folder)
-        elif mime_type and mime_type.startswith('video'):
-            preview = generate_video_preview(file_path, output_folder)
-        else:
-            return
-        return preview
-    except Exception as e:
-        print(f"An error occurred while processing {file_path}: {e}")
+#     try:
+#         if mime_type and mime_type.startswith('text'):
+#             preview = generate_text_preview(file_path, output_folder)
+#         elif mime_type and (file_path.endswith('.py') or file_path.endswith('.cs')):
+#             preview = generate_code_preview(file_path, output_folder)
+#         elif mime_type == 'application/pdf':
+#             preview = generate_pdf_preview(file_path, output_folder)
+#         elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+#             preview = generate_docx_preview(file_path, output_folder)
+#         elif mime_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+#             preview = generate_xlsx_preview(file_path, output_folder)
+#         elif mime_type and mime_type.startswith('image'):
+#             preview = generate_image_preview(file_path, output_folder)
+#         elif mime_type and mime_type.startswith('audio'):
+#             preview = generate_audio_preview(file_path, output_folder)
+#         elif mime_type and mime_type.startswith('video'):
+#             preview = generate_video_preview(file_path, output_folder)
+#         else:
+#             return
+#         return preview
+#     except Exception as e:
+#         print(f"An error occurred while processing {file_path}: {e}")
 
 
 def compute_hash(file_content):
@@ -304,7 +304,7 @@ class ChordNode:
         threading.Thread(target=self.fix_fingers, daemon=True).start()
         logger.info("Hilo de corrección de finger table iniciado")
 
-        threading.Thread(target=self.heartbeat, daemon=True).start()
+        # threading.Thread(target=self.heartbeat, daemon=True).start()
 
         # Socket para broadcast
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -390,42 +390,35 @@ class ChordNode:
         """Guarda un archivo en la base de datos."""
         with self.lock:
             try:
-                cursor = self.conn.cursor()  # en vez de self.cursor
-                # logger.info(f"Guardando archivo: '{file_name}' ({file_type}, {len(file_content)} bytes)")
+                cursor = self.conn.cursor()  # Usar cursor local
                 file_hash = getShaRepr(str(file_content))
                 file_hash_str = str(file_hash)
-                # logger.debug(f"Hash del archivo: {file_hash[:10]}...")
 
                 cursor.execute('SELECT id FROM files WHERE hash = ?', (file_hash_str,))
                 file_record = cursor.fetchone()
 
                 if file_record:
                     file_id = file_record[0]
-                    # logger.debug(f"Archivo con hash {file_hash[:10]}... ya existe (ID: {file_id})")
-
                     cursor.execute('SELECT name FROM file_names WHERE file_id = ? AND name = ?', (file_id, file_name))
                     name_record = cursor.fetchone()
 
                     if not name_record:
-                        # logger.info(f"Añadiendo nuevo nombre '{file_name}' a archivo existente (ID: {file_id})")
                         cursor.execute('INSERT INTO file_names (file_id, name) VALUES (?, ?)', (file_id, file_name))
                         self.conn.commit()
                         return "Nombre agregado al archivo existente"
 
-                    # logger.info(f"El archivo '{file_name}' ya existe con exactamente el mismo contenido")
                     return "El archivo ya existe con ese nombre"
                 else:
-                    # logger.info(f"Guardando nuevo archivo '{file_name}' ({file_type}, {len(file_content)} bytes)")
                     cursor.execute('INSERT INTO files (hash, content, type) VALUES (?, ?, ?)',
-                                      (file_hash_str, file_content, file_type))
+                                (file_hash_str, file_content, file_type))
                     file_id = cursor.lastrowid
                     cursor.execute('INSERT INTO file_names (file_id, name) VALUES (?, ?)', (file_id, file_name))
                     self.conn.commit()
-                    # logger.info(f"Nuevo archivo guardado con ID: {file_id}")
                     return "Archivo subido correctamente"
             except Exception as e:
                 logger.error(f"Error al guardar archivo '{file_name}': {e}", exc_info=True)
                 return f"Error al guardar archivo: {e}"
+
 
     def broadcast_search(self, file_name, file_type):
         results = []
@@ -465,59 +458,64 @@ class ChordNode:
         - file_name: si no es None (o si es '*'), se ignora el filtro de nombre
         - file_type: si no es None (o si es '*'), se ignora el filtro de tipo
         """
-        try:
-            base_query = """SELECT fn.name, f.type, f.hash
-                            FROM files f
-                            JOIN file_names fn ON f.id = fn.file_id
-                            WHERE 1=1"""
-            params = []
+        with self.lock:
+            try:
+                base_query = """SELECT fn.name, f.type, f.hash
+                                FROM files f
+                                JOIN file_names fn ON f.id = fn.file_id
+                                WHERE 1=1"""
+                params = []
 
-            # Filtro por nombre (si file_name no es '*' y no es vacío)
-            if file_name and file_name != "*":
-                base_query += " AND fn.name LIKE ?"
-                params.append(f"%{file_name}%")
+                # Filtro por nombre (si file_name no es '*' y no es vacío)
+                if file_name and file_name != "*":
+                    base_query += " AND fn.name LIKE ?"
+                    params.append(f"%{file_name}%")
 
-            # Filtro por tipo (si file_type no es '*' y no es vacío)
-            if file_type and file_type != "*":
-                base_query += " AND f.type = ?"
-                params.append(file_type)
+                # Filtro por tipo (si file_type no es '*' y no es vacío)
+                if file_type and file_type != "*":
+                    base_query += " AND f.type = ?"
+                    params.append(file_type)
 
-            # Ahora ejecutamos:
-            self.cursor.execute(base_query, params)
-            rows = self.cursor.fetchall()
+                cursor = self.conn.cursor()
+                cursor.execute(base_query, params)
+                rows = cursor.fetchall()
 
-            results = []
-            for row in rows:
-                results.append({
-                    "name": row[0],
-                    "type": row[1],
-                    "hash": row[2],
-                    "ip": self.ip
-                })
+                results = []
+                for row in rows:
+                    results.append({
+                        "name": row[0],
+                        "type": row[1],
+                        "hash": row[2],
+                        "ip": self.ip
+                    })
 
-            return results
-        except Exception as e:
-            logger.error(f"Error en búsqueda local: {e}", exc_info=True)
-            return []
+                return results
+            except Exception as e:
+                logger.error(f"Error en búsqueda local: {e}", exc_info=True)
+                return []
+
 
 
     def download_file(self, file_hash_str):
         """Recupera un archivo de la base de datos local."""
-        try:
-            self.cursor.execute('''
-                SELECT content
-                FROM files
-                WHERE hash = ?
-            ''', (file_hash_str,))
-            result = self.cursor.fetchone()
-            if result:
-                return result[0]  # El contenido binario
-            else:
-                logger.warning(f"Archivo con hash '{file_hash_str}' no encontrado en este nodo")
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                    SELECT content
+                    FROM files
+                    WHERE hash = ?
+                ''', (file_hash_str,))
+                result = cursor.fetchone()
+                if result:
+                    return result[0]  # El contenido binario
+                else:
+                    logger.warning(f"Archivo con hash '{file_hash_str}' no encontrado en este nodo")
+                    return None
+            except Exception as e:
+                logger.error(f"Error al recuperar archivo con hash '{file_hash_str}': {e}", exc_info=True)
                 return None
-        except Exception as e:
-            logger.error(f"Error al recuperar archivo con hash '{file_hash_str}': {e}", exc_info=True)
-            return None
+
 
     def remove_local_file(self, file_name: str):
         """
@@ -526,15 +524,15 @@ class ChordNode:
         """
         with self.lock:
             try:
-                # logger.info(f"Eliminando archivo local '{file_name}' en nodo {self.ip}")
+                cursor = self.conn.cursor()
                 # 1) Buscar qué file_id corresponde a ese nombre
-                self.cursor.execute('''
+                cursor.execute('''
                     SELECT f.id
                     FROM files f
                     JOIN file_names fn ON f.id = fn.file_id
                     WHERE fn.name = ?
                 ''', (file_name,))
-                row = self.cursor.fetchone()
+                row = cursor.fetchone()
                 if not row:
                     logger.warning(f"No se encontró '{file_name}' en este nodo.")
                     return "NOT_FOUND"
@@ -542,21 +540,21 @@ class ChordNode:
                 file_id = row[0]
 
                 # 2) Eliminar el nombre de la tabla file_names
-                self.cursor.execute('DELETE FROM file_names WHERE file_id = ? AND name = ?', (file_id, file_name))
+                cursor.execute('DELETE FROM file_names WHERE file_id = ? AND name = ?', (file_id, file_name))
 
                 # 3) Ver si ese file_id aún tiene otros nombres
-                self.cursor.execute('SELECT COUNT(*) FROM file_names WHERE file_id = ?', (file_id,))
-                count_names = self.cursor.fetchone()[0]
+                cursor.execute('SELECT COUNT(*) FROM file_names WHERE file_id = ?', (file_id,))
+                count_names = cursor.fetchone()[0]
 
                 # 4) Si no quedan nombres, eliminar el registro de 'files'
                 if count_names == 0:
-                    # logger.info(f"'{file_name}' era el único nombre. Eliminando contenido ID={file_id} definitivamente.")
-                    self.cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
+                    cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
                 self.conn.commit()
                 return "OK"
             except Exception as e:
                 logger.error(f"Error eliminando archivo '{file_name}': {e}", exc_info=True)
                 return f"ERROR:{e}"
+
 
 
     def _inbetween(self, k: int, start: int, end: int) -> bool:
@@ -656,7 +654,7 @@ class ChordNode:
         if self.successor2.ip not in self.known_nodes:
             self.known_nodes.add(self.successor2.ip)
 
-        self.maintenance_once()
+        # self.maintenance_once()
 
         # logger.info(f"Sucesor 3 establecido: {self.successor2.ip} (ID: {self.successor2.id})")
 
@@ -879,18 +877,22 @@ class ChordNode:
         - Si no, intento subir al responsable (verificando si está vivo).
         - Solo elimino mi copia si el remoto confirma que guardó (o “ya existe mismo hash”).
         """
-    # while True:
-        if not self.ring_stable:
-            logger.info("[REPLICACIÓN] El anillo no está estable, se omite replicación por ahora.")
-            return  # o un time.sleep(…)
+        # while True:
+        # if not self.ring_stable:
+        #     logger.info("[REPLICACIÓN] El anillo no está estable, se omite replicación por ahora.")
+        #     return  # o un time.sleep(…)
+
+        # with self.lock:
         try:
             logger.info("[REPLICACIÓN] Iniciando verificación/replicación de archivos...")
-            self.cursor.execute("""
+            # Usar un cursor local en vez de self.cursor
+            cursor = self.conn.cursor()
+            cursor.execute("""
                 SELECT f.content, f.type, fn.name
                 FROM files f
                 JOIN file_names fn ON f.id = fn.file_id
             """)
-            rows = self.cursor.fetchall()
+            rows = cursor.fetchall()
             logger.info(f"[REPLICACIÓN] Encontrados {len(rows)} archivos/nombres en la base local.")
 
             for content, ftype, fname in rows:
@@ -938,7 +940,7 @@ class ChordNode:
                 else:
                     # No soy responsable → lo subo al responsable
                     logger.info(f"[REPLICACIÓN] '{fname}' no pertenece a mí. Lo envío a {responsable.ip} y luego lo elimino si confirma.")
-                    upload_resp = responsable.save_file(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
+                    upload_resp = responsable.replic(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
 
                     remove_resp = self.remove_local_file(fname)
                     logger.debug(f"[REPLICACIÓN] remove_local_file: {remove_resp}")
@@ -946,24 +948,11 @@ class ChordNode:
                     responsable.succ.replic(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
                     responsable.succ.succ.replic(fname, ftype, content, file_size).decode('utf-8', errors='ignore')
 
-                    # Determina si realmente se guardó
-                    # Ej. "Archivo subido correctamente" o "Nombre agregado al archivo existente"
-                    # si confirmamos que la hash coincide.
-                    # if "subido correctamente" in upload_resp.lower() or "agregado al archivo existente" in upload_resp.lower():
-                        # Eliminamos local
-
-                    # elif "ya existe con ese nombre" in upload_resp.lower():
-                    #     # Ideal: checar si es la misma hash.
-                    #     # Suponiendo que es la misma, entonces lo borro local:
-                    #     remove_resp = self.remove_local_file(fname)
-                    #     logger.debug(f"[REPLICACIÓN] remove_local_file: {remove_resp}")
-                    # else:
-                        # logger.warning(f"[REPLICACIÓN] El responsable devolvió respuesta inesperada: '{upload_resp}'. No elimino mi copia local.")
-
             self.replication_ok = True
             logger.info("[REPLICACIÓN] Replicación exitosa. replication_ok se marca True.")
         except Exception as e:
             logger.error(f"[REPLICACIÓN] ERROR: {e}", exc_info=True)
+
 
         # time.sleep(5)
 
@@ -1197,7 +1186,8 @@ class ChordNode:
                             response = responsible_node.save_file(file_name, file_type, file_content, file_size).decode()
                 logger.debug("Enviando respuesta")
                 conn.send(response.encode())
-                self.maintenance_once()
+                threading.Thread(target=self.replicate, daemon=True).start()
+                # self.replicate()
 
             elif option == REPLIC:
                 file_name, file_type, file_size = data[1], data[2], int(data[3])
@@ -1232,59 +1222,59 @@ class ChordNode:
                     logger.error(f"Búsqueda por broadcast fallada: {e}")
                     conn.sendall("ERROR DURANTE LA BUSQUEDA POR BROADCAST".encode())
 
-            elif option == PREVIEW_FILE:
-                file_hash_g = data[1]
-                file_hash = int(file_hash_g, 10)
-                # 2) Buscar al responsable
-                responsable = self.find_succ(file_hash)
-                if responsable.id == self.id:
-                    # YO soy responsable (o tengo el archivo) => descargo local
-                    file_content = self.download_file(file_hash_g)
-                    if not file_content:
-                        # no encontrado => mando tamaño cero
-                        conn.send("0".encode())
-                        return
-                    # 3) Enviar tamaño
-                    conn.send(str(len(file_content)).encode())
-                    # Esperar el ACK del cliente
-                    ack = conn.recv(1024).decode()
-                    # 4) Enviar el contenido
-                    offset = 0
-                    while offset < len(file_content):
-                        chunk = file_content[offset: offset+1024000]
-                        conn.send(chunk)
-                        offset += len(chunk)
-                else:
-                    # Reenviamos la petición a 'responsable'
-                    logger.info(f"Redirigiendo descarga de '{file_hash}' al nodo responsable {responsable.ip}")
-                    try:
-                        # 1) Conectar al responsable
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
-                            s2.connect((responsable.ip, responsable.port))
-                            # 2) Mandar la misma operación: DOWNLOAD_FILE,<file_name>
-                            s2.sendall(f"{DOWNLOAD_FILE},{file_hash}".encode('utf-8'))
+            # elif option == PREVIEW_FILE:
+            #     file_hash_g = data[1]
+            #     file_hash = int(file_hash_g, 10)
+            #     # 2) Buscar al responsable
+            #     responsable = self.find_succ(file_hash)
+            #     if responsable.id == self.id:
+            #         # YO soy responsable (o tengo el archivo) => descargo local
+            #         file_content = self.download_file(file_hash_g)
+            #         if not file_content:
+            #             # no encontrado => mando tamaño cero
+            #             conn.send("0".encode())
+            #             return
+            #         # 3) Enviar tamaño
+            #         conn.send(str(len(file_content)).encode())
+            #         # Esperar el ACK del cliente
+            #         ack = conn.recv(1024).decode()
+            #         # 4) Enviar el contenido
+            #         offset = 0
+            #         while offset < len(file_content):
+            #             chunk = file_content[offset: offset+1024000]
+            #             conn.send(chunk)
+            #             offset += len(chunk)
+            #     else:
+            #         # Reenviamos la petición a 'responsable'
+            #         logger.info(f"Redirigiendo descarga de '{file_hash}' al nodo responsable {responsable.ip}")
+            #         try:
+            #             # 1) Conectar al responsable
+            #             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
+            #                 s2.connect((responsable.ip, responsable.port))
+            #                 # 2) Mandar la misma operación: DOWNLOAD_FILE,<file_name>
+            #                 s2.sendall(f"{DOWNLOAD_FILE},{file_hash}".encode('utf-8'))
 
-                            # 3) Leer el tamaño que responde el responsable
-                            size_str = s2.recv(1024).decode()
-                            # reenviamos el tamaño al cliente
-                            conn.send(size_str.encode())
+            #                 # 3) Leer el tamaño que responde el responsable
+            #                 size_str = s2.recv(1024).decode()
+            #                 # reenviamos el tamaño al cliente
+            #                 conn.send(size_str.encode())
 
-                            # 4) Recibir su ACK del cliente y reenviarlo
-                            ack2 = conn.recv(1024).decode()
-                            s2.sendall(ack2.encode())
+            #                 # 4) Recibir su ACK del cliente y reenviarlo
+            #                 ack2 = conn.recv(1024).decode()
+            #                 s2.sendall(ack2.encode())
 
-                            # 5) Recibir el contenido del responsable y reenviarlo al cliente
-                            remaining = int(size_str)
-                            while remaining > 0:
-                                chunk = s2.recv(min(1024000, remaining))
-                                if not chunk:
-                                    break
-                                conn.sendall(chunk)
-                                remaining -= len(chunk)
-                    except Exception as e:
-                        logger.error(f"Error reenviando la descarga a {responsable.ip}: {e}")
-                        # Notificar que no se pudo, enviamos '0'
-                        conn.send("0".encode())
+            #                 # 5) Recibir el contenido del responsable y reenviarlo al cliente
+            #                 remaining = int(size_str)
+            #                 while remaining > 0:
+            #                     chunk = s2.recv(min(1024000, remaining))
+            #                     if not chunk:
+            #                         break
+            #                     conn.sendall(chunk)
+            #                     remaining -= len(chunk)
+            #         except Exception as e:
+            #             logger.error(f"Error reenviando la descarga a {responsable.ip}: {e}")
+            #             # Notificar que no se pudo, enviamos '0'
+            #             conn.send("0".encode())
             elif option == DOWNLOAD_FILE:
                 file_hash_g = data[1]
                 file_hash = int(file_hash_g, 10)
