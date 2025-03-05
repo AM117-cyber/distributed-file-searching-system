@@ -1,21 +1,21 @@
-import mimetypes
+# import mimetypes
 import os
 import socket
 import struct
 import time
 import ssl
-import tempfile
-from PIL import Image
-from moviepy import VideoFileClip
-from pydub import AudioSegment
-from pydub.playback import play
-from docx import Document
-from openpyxl import load_workbook
-import PyPDF2
-import win32com.client
+# import tempfile
+# from PIL import Image
+# from moviepy import VideoFileClip
+# from pydub import AudioSegment
+# from pydub.playback import play
+# from docx import Document
+# from openpyxl import load_workbook
+# import PyPDF2
+# import win32com.client
 
-import subprocess
-import platform
+# import subprocess
+# import platform
 
 
 CLIENT_FILES_DIR = "/app/client_files"
@@ -39,27 +39,27 @@ DOWNLOAD_FILE = 12
 SEARCH_FILE = 11
 PREVIEW_FILE = 20
 
-def get_preview_name(mime_type):
+# def get_preview_name(mime_type):
 
-        if mime_type and mime_type.startswith('text'):
-            return "text_preview"
-        elif mime_type:
-            return "code_preview"
-        elif mime_type == 'application/pdf':
-            return "pdf_preview"
-        elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-            return "docx_preview"
-        elif mime_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-            return "xlsx_preview"
-        elif mime_type and mime_type.startswith('image'):
-            return "image_preview"
-        elif mime_type and mime_type.startswith('audio'):
-            return "audio_preview"
-        elif mime_type and mime_type.startswith('video'):
-            return "video_preview"
-        else:
-            print(f"Unsupported file type or file not found for")
-            return ""
+#         if mime_type and mime_type.startswith('text'):
+#             return "text_preview"
+#         elif mime_type:
+#             return "code_preview"
+#         elif mime_type == 'application/pdf':
+#             return "pdf_preview"
+#         elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+#             return "docx_preview"
+#         elif mime_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+#             return "xlsx_preview"
+#         elif mime_type and mime_type.startswith('image'):
+#             return "image_preview"
+#         elif mime_type and mime_type.startswith('audio'):
+#             return "audio_preview"
+#         elif mime_type and mime_type.startswith('video'):
+#             return "video_preview"
+#         else:
+#             print(f"Unsupported file type or file not found for")
+#             return ""
 
 
 client_ssl_context = ssl.create_default_context()
@@ -242,12 +242,12 @@ def download_file(command):
 
             prompt = (
                 "\nInsert the number corresponding to the action you want to perform next:\n"
-                " 1- Preview one of the files\n"
-                " 2- Download one of the files\n"
+                " 1- Download one of the files\n"
+                " 2- \n"
                 " 3- exit\n"
             )
         operation = input(prompt)
-        if not (1 <= operation < 4):
+        if operation != "1" and operation != "3":
                 print("[ERROR] Invalid action.")
                 client_socket.close()
                 return
@@ -293,8 +293,8 @@ def download_file(command):
 
         if operation == "1":
             operation = DOWNLOAD_FILE
-        else:
-            operation = PREVIEW_FILE
+        # else:
+        # #     operation = PREVIEW_FILE
         ssl_socket.sendall(f"{DOWNLOAD_FILE},{selected_hash}".encode('utf-8'))
         size_str = ssl_socket.recv(1024).decode('utf-8')
         try:
@@ -329,75 +329,75 @@ def download_file(command):
                 print(f"[INFO] Archivo descargado y guardado exitosamente: {local_filename}")
 
             ssl_socket.close()
-        else:
-            mime_type, _ = mimetypes.guess_type(f"{results[index]['name']}.{results[index]['type']}")
-            lname = get_preview_name(mime_type)
-            if lname == "":
-                client_socket.close()
-                return
-            local_filename = os.path.join(PREVIEW_DIR, lname)
-            print(f"[INFO] Descargando el preview del archivo y guardándolo en: {local_filename}")
-            remainder = file_size
-            with open(local_filename, 'wb') as f:
-                while remainder > 0:
-                    chunk = client_socket.recv(min(remainder, 1024000))
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    remainder -= len(chunk)
-            if remainder > 0:
-                print("[AVISO] La descarga se interrumpió.")
-            else:
-                print(f"[INFO] Archivo descargado y guardado exitosamente: {local_filename}")
+        # else:
+        #     mime_type, _ = mimetypes.guess_type(f"{results[index]['name']}.{results[index]['type']}")
+        #     lname = get_preview_name(mime_type)
+        #     if lname == "":
+        #         client_socket.close()
+        #         return
+        #     local_filename = os.path.join(PREVIEW_DIR, lname)
+        #     print(f"[INFO] Descargando el preview del archivo y guardándolo en: {local_filename}")
+        #     remainder = file_size
+        #     with open(local_filename, 'wb') as f:
+        #         while remainder > 0:
+        #             chunk = client_socket.recv(min(remainder, 1024000))
+        #             if not chunk:
+        #                 break
+        #             f.write(chunk)
+        #             remainder -= len(chunk)
+        #     if remainder > 0:
+        #         print("[AVISO] La descarga se interrumpió.")
+        #     else:
+        #         print(f"[INFO] Archivo descargado y guardado exitosamente: {local_filename}")
 
-            ssl_socket.close()
-            with open(local_filename, 'rb') as f:
-                preview = f.read()
-                    # Display the preview
-            if preview.endswith(".txt"):
-                with open(preview, 'r') as file:
-                    print(file.read())
-            elif mime_type and mime_type.startswith('image'):
-                with Image.open(preview) as img:
-                    img.show()
-        # elif mime_type and mime_type.startswith('audio'):
-        #     try:
-        #         # Load the audio preview file
-        #         audio = AudioSegment.from_file(preview)
-        #         print("Playing audio preview...")
-        #         play(audio)
-        #     except Exception as e:
-        #         print(f"An error occurred while playing the audio preview: {e}")
-            elif mime_type and mime_type.startswith('audio'):
-                try:
-                #    Check if the audio preview was created
-                    if preview:
-                        print(f"Playing audio preview: {preview}")
-                        # Use the system's default media player to play the audio
-                        if platform.system() == "Windows":
-                            os.startfile(preview)  # Open with the default player on Windows
-                        elif platform.system() == "Darwin":  # macOS
-                            subprocess.run(["open", preview])
-                        else:  # Linux/Unix
-                            subprocess.run(["xdg-open", preview])
-                    else:
-                        print("Audio preview could not be created.")
-                except Exception as e:
-                    print(f"An error occurred while playing the audio preview: {e}")
+        #     ssl_socket.close()
+        #     with open(local_filename, 'rb') as f:
+        #         preview = f.read()
+        #             # Display the preview
+        #     if preview.endswith(".txt"):
+        #         with open(preview, 'r') as file:
+        #             print(file.read())
+        #     elif mime_type and mime_type.startswith('image'):
+        #         with Image.open(preview) as img:
+        #             img.show()
+        # # elif mime_type and mime_type.startswith('audio'):
+        # #     try:
+        # #         # Load the audio preview file
+        # #         audio = AudioSegment.from_file(preview)
+        # #         print("Playing audio preview...")
+        # #         play(audio)
+        # #     except Exception as e:
+        # #         print(f"An error occurred while playing the audio preview: {e}")
+        #     elif mime_type and mime_type.startswith('audio'):
+        #         try:
+        #         #    Check if the audio preview was created
+        #             if preview:
+        #                 print(f"Playing audio preview: {preview}")
+        #                 # Use the system's default media player to play the audio
+        #                 if platform.system() == "Windows":
+        #                     os.startfile(preview)  # Open with the default player on Windows
+        #                 elif platform.system() == "Darwin":  # macOS
+        #                     subprocess.run(["open", preview])
+        #                 else:  # Linux/Unix
+        #                     subprocess.run(["xdg-open", preview])
+        #             else:
+        #                 print("Audio preview could not be created.")
+        #         except Exception as e:
+        #             print(f"An error occurred while playing the audio preview: {e}")
 
 
-            elif mime_type and mime_type.startswith('video'):
-                if preview:  # Ensure the preview was created successfully
-                    print(f"Playing video preview: {preview}")
-                # Use system's default media player to play the preview
-                    if platform.system() == "Windows":
-                        os.startfile(preview)  # Open with the default player on Windows
-                    elif platform.system() == "Darwin":  # macOS
-                        subprocess.run(["open", preview])
-                    else:  # Linux/Unix
-                        subprocess.run(["xdg-open", preview])
-                else:
-                    print("Video preview could not be created.")
+        #     elif mime_type and mime_type.startswith('video'):
+        #         if preview:  # Ensure the preview was created successfully
+        #             print(f"Playing video preview: {preview}")
+        #         # Use system's default media player to play the preview
+        #             if platform.system() == "Windows":
+        #                 os.startfile(preview)  # Open with the default player on Windows
+        #             elif platform.system() == "Darwin":  # macOS
+        #                 subprocess.run(["open", preview])
+        #             else:  # Linux/Unix
+        #                 subprocess.run(["xdg-open", preview])
+        #         else:
+        #             print("Video preview could not be created.")
         # elif mime_type and mime_type.startswith('video'):
         #     with VideoFileClip(preview) as video:
         #         print(f"Video preview ready at: {preview}")
