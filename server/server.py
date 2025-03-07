@@ -234,10 +234,10 @@ def generate_video_preview(file_content):
         with VideoFileClip(temp_file_path) as video:
             # Extract clip from 5 to min(16 seconds, video duration)
             end = min(16, video.duration)
-            preview_clip = video.subclip(5, end)
+            preview_clip = video.subclipped(5, end)
 
             # Resize the clip to reduce resolution
-            preview_clip_resized = preview_clip.resize(height=144)  # Resize to 144p
+            preview_clip_resized = preview_clip.resized(height=144)  # Resize to 144p
             preview_clip_resized.write_videofile(
                 output_file_path,
                 codec="libx264",
@@ -266,6 +266,7 @@ def generate_video_preview(file_content):
 def get_preview(file_content, file_name_plus_type):
     """Process the file and generate a preview based on its type."""
     mime_type, _ = mimetypes.guess_type(file_name_plus_type)
+    logger.info(f'{file_name_plus_type}')
     try:
         if mime_type and mime_type.startswith('text'):
             preview = generate_text_preview(file_content)
@@ -1446,11 +1447,13 @@ class ChordNode:
                 if responsable.id == self.id:
                     # Caso en el que el nodo actual es responsable
                     file_content = self.download_file(file_hash_g)
+                    logger.info(f"!!!!!!!!!!!!! {file_content}")
                     if not file_content:
                         conn.send("0".encode())
                         return
 
                     preview = get_preview(file_content, file_name_type)
+                    logger.info(f"?????????????? {preview}")
                     if preview is None:
                         conn.send("0".encode())
                         return
