@@ -18,7 +18,7 @@ from docx import Document
 from openpyxl import load_workbook
 from io import BytesIO
 import PyPDF2
-import win32com.client
+# import win32com.client
 import mimetypes
 
 import subprocess
@@ -62,13 +62,19 @@ GET_STATUS = 99
 PREVIEW_FILE = 20
 
 def convert_doc_to_docx(doc_path):
-    """Convert .doc file to .docx using pywin32."""
-    word = win32com.client.Dispatch("Word.Application")
-    doc = word.Documents.Open(doc_path)
-    docx_path = doc_path + "x"  # Convert .doc to .docx
-    doc.SaveAs(docx_path, FileFormat=16)  # 16 corresponds to .docx format
-    doc.Close()
-    word.Quit()
+    """
+    Convierte un archivo .doc a .docx utilizando la herramienta textutil de macOS.
+    """
+    output_dir = os.path.dirname(doc_path)
+    base_name = os.path.splitext(os.path.basename(doc_path))[0]
+    docx_path = os.path.join(output_dir, base_name + ".docx")
+    try:
+        subprocess.run(
+            ['textutil', '-convert', 'docx', doc_path, '-output', docx_path],
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Error al convertir {doc_path}: {e}")
     return docx_path
 
 def generate_doc_preview(file_path, output_folder):
@@ -78,7 +84,7 @@ def generate_doc_preview(file_path, output_folder):
     try:
         # Convert .doc to .docx
         converted_path = convert_doc_to_docx(file_path)
-        
+
         # Process the .docx using python-docx
         doc = Document(converted_path)
         with open(preview_file, 'w') as preview:
@@ -174,7 +180,7 @@ def generate_image_preview(file_content):
             # Convert RGBA to RGB (remove the alpha channel)
             if img.mode == "RGBA":
                 img = img.convert("RGB")
-            
+
             # Create a thumbnail (resize while maintaining aspect ratio)
             img.thumbnail((400, 400))
 
@@ -1444,7 +1450,7 @@ class ChordNode:
                         # no encontrado => mando tamaño cero
                         conn.send("0".encode())
                         return
-                    
+
                     # Mando a que se cree el preview
                     preview = get_preview(file_content, {file_name_type})
 

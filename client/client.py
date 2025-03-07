@@ -13,7 +13,7 @@ from pydub.playback import play
 from docx import Document
 from openpyxl import load_workbook
 import PyPDF2
-import win32com.client
+# import win32com.client
 
 import subprocess
 import platform
@@ -253,7 +253,7 @@ def download_file(command):
                 ssl_socket.close()
                 return
 
-        
+
         print("[INFO] Resultados de búsqueda:")
         for idx, result in enumerate(results, start=1):
                 print(f"  {idx}. {result['name']} ({result['type']}) - Nodo: {result['ip']} (hash: {result['hash']})")
