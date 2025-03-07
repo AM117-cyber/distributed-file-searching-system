@@ -43,8 +43,6 @@ def get_preview_name(mime_type):
 
         if mime_type and mime_type.startswith('text'):
             return "text_preview"
-        elif mime_type:
-            return "code_preview"
         elif mime_type == 'application/pdf':
             return "pdf_preview"
         elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
@@ -57,6 +55,8 @@ def get_preview_name(mime_type):
             return "audio_preview"
         elif mime_type and mime_type.startswith('video'):
             return "video_preview"
+        elif mime_type:
+            return "code_preview"
         else:
             print(f"Unsupported file type or file not found for")
             return ""
@@ -328,12 +328,14 @@ def download_file(command):
 
             ssl_socket.close()
         else:
+            # PREVIEW_FILE
             mime_type, _ = mimetypes.guess_type(f"{results[index]['name']}.{results[index]['type']}")
             lname = get_preview_name(mime_type)
             if lname == "":
                 ssl_socket.close()
                 return
-            local_filename = os.path.join(PREVIEW_DIR, lname)
+            a = f"{lname}.{results[index]['type']}"
+            local_filename = os.path.join(DOWNLOADS_DIR, a)
             print(f"[INFO] Descargando el preview del archivo y guardándolo en: {local_filename}")
             remainder = file_size
             with open(local_filename, 'wb') as f:
@@ -346,47 +348,25 @@ def download_file(command):
             if remainder > 0:
                 print("[AVISO] La descarga se interrumpió.")
             else:
-                print(f"[INFO] Archivo descargado y guardado exitosamente: {local_filename}")
-
+                print(f"[INFO] Preview descargado exitosamente: {local_filename}")
             ssl_socket.close()
-            # Después de descargar el preview y guardarlo en local_filename...
-            with open(local_filename, 'rb') as f:
-                preview = f.read()
-
-            # Ahora, en lugar de hacer preview.endswith(".txt"),
-            # comprobamos la extensión del archivo usando local_filename.
-            if local_filename.endswith(".txt"):
-                with open(local_filename, 'r', encoding='utf-8') as file:
-                    print(file.read())
-            elif mime_type and mime_type.startswith('image'):
-                with Image.open(local_filename) as img:
-                    img.show()
-            elif mime_type and mime_type.startswith('audio'):
+            # Si el archivo es de texto, mostrarlo en consola; de lo contrario, abrirlo con la aplicación predeterminada.
+            if mime_type and mime_type.startswith('text'):
                 try:
-                    # Se asume que 'preview' es el nombre del archivo
-                    if local_filename:
-                        print(f"Playing audio preview: {local_filename}")
-                        if platform.system() == "Windows":
-                            os.startfile(local_filename)
-                        elif platform.system() == "Darwin":
-                            subprocess.run(["open", local_filename])
-                        else:
-                            subprocess.run(["xdg-open", local_filename])
-                    else:
-                        print("Audio preview could not be created.")
+                    with open(local_filename, 'r', encoding='utf-8') as file:
+                        preview_content = file.read()
+                    print("[INFO] Contenido del preview:")
+                    print(preview_content)
                 except Exception as e:
-                    print(f"An error occurred while playing the audio preview: {e}")
-            elif mime_type and mime_type.startswith('video'):
-                if local_filename:
-                    print(f"Playing video preview: {local_filename}")
-                    if platform.system() == "Windows":
-                        os.startfile(local_filename)
-                    elif platform.system() == "Darwin":
-                        subprocess.run(["open", local_filename])
-                    else:
-                        subprocess.run(["xdg-open", local_filename])
-                else:
-                    print("Video preview could not be created.")
+                    print(f"[ERROR] No se pudo leer el preview de texto: {e}")
+            # else:
+            #     try:
+            #         print(f"[INFO] Abriendo el preview: {local_filename}")
+            #         # En macOS se usa el comando 'open' para abrir archivos con la aplicación predeterminada
+            #         subprocess.call(['open','-W', local_filename])
+            #     except Exception as e:
+            #         print(f"[ERROR] Error al abrir el preview: {e}")
+
 
 
 
