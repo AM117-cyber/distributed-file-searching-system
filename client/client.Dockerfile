@@ -70,20 +70,21 @@
 # ENTRYPOINT ["/bin/bash", "-c", "/app/client.sh"]
 
 # CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Usa la imagen base definida (por ejemplo, "base")
+FROM base
 
-
-
-FROM python:3.9-slim
-
-# Crear directorio de trabajo
+# Directorio de trabajo
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
+# Instalar paquetes adicionales en Alpine: iproute2 y bash
+RUN apk update && apk add --no-cache iproute2 bash
 
-# Copiar los archivos necesarios
+# Copiar los archivos del cliente
 COPY client/client.py ./client.py
 COPY client/client.sh /usr/local/bin/client.sh
 
+# Hacer ejecutable el script del cliente
 RUN chmod +x /usr/local/bin/client.sh
 
+# Definir ENTRYPOINT: se ejecuta el script y luego se inicia el cliente
 ENTRYPOINT ["/bin/bash", "-c", "/usr/local/bin/client.sh && python /app/client.py"]

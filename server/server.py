@@ -1439,30 +1439,31 @@ class ChordNode:
 
             elif option == PREVIEW_FILE:
                 file_hash_g = data[1]
-                file_name_type = data[2]
+                file_name_type = data[2]  # Asegúrate de recibir un string, no un set.
                 file_hash = int(file_hash_g, 10)
                 # 2) Buscar al responsable
                 responsable = self.find_succ(file_hash)
                 if responsable.id == self.id:
-                    # YO soy responsable (o tengo el archivo) => descargo local
+                    # Caso en el que el nodo actual es responsable
                     file_content = self.download_file(file_hash_g)
                     if not file_content:
-                        # no encontrado => mando tamaño cero
                         conn.send("0".encode())
                         return
 
-                    # Mando a que se cree el preview
-                    preview = get_preview(file_content, {file_name_type})
+                    preview = get_preview(file_content, file_name_type)
+                    if preview is None:
+                        conn.send("0".encode())
+                        return
 
-                    # 3) Enviar tamaño del preview
+                    if isinstance(preview, str):
+                        preview = preview.encode("utf-8")
+
                     conn.send(str(len(preview)).encode())
-                    # Esperar el ACK del cliente
                     ack = conn.recv(1024).decode()
-        #!!!!!!!!!!!!!!   # 4) Enviar el contenido del preview!!!!!!!!!!
                     offset = 0
                     while offset < len(preview):
                         chunk = preview[offset: offset+1024000]
-                        conn.send(chunk)
+                        conn.sendall(chunk)
                         offset += len(chunk)
                 else:
                     logger.info(f"Redirigiendo descarga de '{file_hash}' al nodo responsable {responsable.ip}")
@@ -1473,11 +1474,17 @@ class ChordNode:
                             context.check_hostname = False
                             context.verify_mode = ssl.CERT_NONE
                             with context.wrap_socket(raw_sock, server_hostname=responsable.ip) as ssl_sock:
+                                # Enviar la solicitud al nodo responsable
                                 ssl_sock.sendall(f"{PREVIEW_FILE},{file_hash},{file_name_type}".encode('utf-8'))
+
+                                # Recibir el tamaño del preview del nodo responsable
                                 original_size = ssl_sock.recv(1024).decode()
 
-                                # Obtengo el archivo del nodo responsable
-                                file_content =bytearray()
+                                # ¡Enviar ACK inmediatamente para que el responsable comience a enviar los datos!
+                                ssl_sock.sendall("ACK".encode('utf-8'))
+
+                                # Recibir el preview en chunks
+                                file_content = bytearray()
                                 remaining = int(original_size)
                                 while remaining > 0:
                                     chunk = ssl_sock.recv(min(1024000, remaining))
@@ -1485,14 +1492,20 @@ class ChordNode:
                                     if not chunk:
                                         break
                                     remaining -= len(chunk)
-                                # Mando a que se cree el preview
-                                preview = get_preview(file_content, {file_name_type})
-                                #  Enviar tamaño del preview
+
+                                # Generar el preview a partir del contenido recibido
+                                preview = get_preview(file_content, file_name_type)
+                                if preview is None:
+                                    conn.send("0".encode())
+                                    return
+                                if isinstance(preview, str):
+                                    preview = preview.encode("utf-8")
+
+                                # Enviar el tamaño del preview al cliente
                                 conn.send(str(len(preview)).encode())
-                                # Esperar el ACK del cliente
-                                ack2 = conn.recv(1024).decode()
-                                ssl_sock.sendall(ack2.encode())
-        #!!!!!!!!!!!!!!   #  Enviar el contenido del preview!!!!!!!!!!
+                                # Esperar ACK del cliente
+                                ack = conn.recv(1024).decode()
+                                # Enviar el preview en chunks al cliente
                                 offset = 0
                                 while offset < len(preview):
                                     chunk = preview[offset: offset+1024000]
@@ -1501,6 +1514,7 @@ class ChordNode:
                     except Exception as e:
                         logger.error(f"Error reenviando la descarga a {responsable.ip}: {e}")
                         conn.send("0".encode())
+
             elif option == DOWNLOAD_FILE:
                 file_hash_g = data[1]
                 file_hash = int(file_hash_g, 10)

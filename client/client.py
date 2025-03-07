@@ -18,7 +18,6 @@ import PyPDF2
 import subprocess
 import platform
 
-
 CLIENT_FILES_DIR = "/app/client_files"
 DOWNLOADS_DIR = "/app/downloads"
 PREVIEW_DIR = "/app/previews"
@@ -350,57 +349,45 @@ def download_file(command):
                 print(f"[INFO] Archivo descargado y guardado exitosamente: {local_filename}")
 
             ssl_socket.close()
+            # Después de descargar el preview y guardarlo en local_filename...
             with open(local_filename, 'rb') as f:
                 preview = f.read()
-                    # Display the preview
-            if preview.endswith(".txt"):
-                with open(preview, 'r') as file:
+
+            # Ahora, en lugar de hacer preview.endswith(".txt"),
+            # comprobamos la extensión del archivo usando local_filename.
+            if local_filename.endswith(".txt"):
+                with open(local_filename, 'r', encoding='utf-8') as file:
                     print(file.read())
             elif mime_type and mime_type.startswith('image'):
-                with Image.open(preview) as img:
+                with Image.open(local_filename) as img:
                     img.show()
-        # elif mime_type and mime_type.startswith('audio'):
-        #     try:
-        #         # Load the audio preview file
-        #         audio = AudioSegment.from_file(preview)
-        #         print("Playing audio preview...")
-        #         play(audio)
-        #     except Exception as e:
-        #         print(f"An error occurred while playing the audio preview: {e}")
             elif mime_type and mime_type.startswith('audio'):
                 try:
-                #    Check if the audio preview was created
-                    if preview:
-                        print(f"Playing audio preview: {preview}")
-                        # Use the system's default media player to play the audio
+                    # Se asume que 'preview' es el nombre del archivo
+                    if local_filename:
+                        print(f"Playing audio preview: {local_filename}")
                         if platform.system() == "Windows":
-                            os.startfile(preview)  # Open with the default player on Windows
-                        elif platform.system() == "Darwin":  # macOS
-                            subprocess.run(["open", preview])
-                        else:  # Linux/Unix
-                            subprocess.run(["xdg-open", preview])
+                            os.startfile(local_filename)
+                        elif platform.system() == "Darwin":
+                            subprocess.run(["open", local_filename])
+                        else:
+                            subprocess.run(["xdg-open", local_filename])
                     else:
                         print("Audio preview could not be created.")
                 except Exception as e:
                     print(f"An error occurred while playing the audio preview: {e}")
-
-
             elif mime_type and mime_type.startswith('video'):
-                if preview:  # Ensure the preview was created successfully
-                    print(f"Playing video preview: {preview}")
-                # Use system's default media player to play the preview
+                if local_filename:
+                    print(f"Playing video preview: {local_filename}")
                     if platform.system() == "Windows":
-                        os.startfile(preview)  # Open with the default player on Windows
-                    elif platform.system() == "Darwin":  # macOS
-                        subprocess.run(["open", preview])
-                    else:  # Linux/Unix
-                        subprocess.run(["xdg-open", preview])
+                        os.startfile(local_filename)
+                    elif platform.system() == "Darwin":
+                        subprocess.run(["open", local_filename])
+                    else:
+                        subprocess.run(["xdg-open", local_filename])
                 else:
                     print("Video preview could not be created.")
-            elif mime_type and mime_type.startswith('video'):
-                with VideoFileClip(preview) as video:
-                    print(f"Video preview ready at: {preview}")
-                    video.preview()
+
 
 
 
